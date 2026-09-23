@@ -1,0 +1,8 @@
+# dsh-script-cards bundle patch
+#
+# 面板的界面在客户端半边（lib/client.js），由 dsh.client.platform 声明。
+# 宿主半边（lib/index.js）注册 Cordis 服务 scriptCardsFs，配合 ./typert 清单
+# 经 Typert 网关给浏览器端开一条落盘通道（只允许写「剧本档案」目录）。
+- insert:
+    - id: script-cards
+      name: 'dsh-script-cards'

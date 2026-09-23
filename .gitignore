@@ -1,0 +1,6 @@
+# 本地/私有的东西，不进公开仓库
+node_modules/
+docs/
+*.log
+.DS_Store
+Thumbs.db

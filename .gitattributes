@@ -1,0 +1,6 @@
+# 这个仓库里全是文本，且 scripts/build.mjs --check 会拿构建产物做逐字节比较，
+# 所以统一强制 LF，避免 Windows 上 CRLF 把 check 弄成 STALE。
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.ico binary

@@ -1,0 +1,71 @@
+{
+  "name": "dsh-script-cards",
+  "version": "1.0.0",
+  "private": true,
+  "description": "DeepSeek Harness 的剧本档案面板：方片网格 + 两级分支画布（章节 / 节点 / 条件 / 结果），卡片文件经宿主半边 Typert 桥读写、随项目进 git。Script-archive panel for DeepSeek Harness: a card grid plus a two-level branch canvas, with every edit written straight back to the project's card files.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./typert": {
+      "default": "./lib/typert.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "src",
+    "scripts",
+    "cordis.patch.yml",
+    "CHANGELOG.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node scripts/build.mjs --check && node tests/host.mjs && node tests/smoke.mjs",
+    "check": "node scripts/build.mjs --check && node --check lib/index.js && node --check lib/typert.js && node --check lib/client.js && node tests/host.mjs && node tests/smoke.mjs"
+  },
+  "license": "MIT",
+  "author": "tokai-teiodh",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tokai-teiodh/dsh-script-cards.git"
+  },
+  "homepage": "https://github.com/tokai-teiodh/dsh-script-cards#readme",
+  "bugs": {
+    "url": "https://github.com/tokai-teiodh/dsh-script-cards/issues"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "script",
+    "screenplay",
+    "writing",
+    "cards",
+    "branching",
+    "canvas",
+    "typert"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "dsh": {
+    "versionTag": "v-alpha-1.0",
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2"
+  }
+}
