@@ -3,14 +3,9 @@
 版本号写在两个地方：`package.json` 的 `version`，以及 `lib/client.js` 里的 `VERSION`
 （面板页眉右上角那个角标）。两者要一起改。git tag 用面板版本号本身
 （`v-alpha-0.1` / `v-alpha-0.2` / `v-alpha-1.0`），便于和用户看到的角标一一对应。
+公开仓库从 `v-alpha-1.0` 开始发布，更早的两个版本只有本地历史。
 
 源码在 `src/`，`lib/client.js` 由 `node scripts/build.mjs` 拼装生成，不要直接改产物。
-
-## 未发布（Unreleased）
-
-- 测试：`tests/host.mjs` 在拿不到 `zod` 的环境（裸克隆）里不再以模块错误崩掉，
-  改为打印 `SKIP` 并跳过 D / E 两段；`package.json` 补上 `zod` 的 peer 声明。
-- 只影响测试与元数据，不改运行时行为。版本号待发布时再定。
 
 ## v-alpha-1.0 — 落盘桥 + 两级分支画布
 
@@ -127,6 +122,9 @@
   frontmatter 白名单加上 `code / chapter / mode / color`，并新增 `summaries` /
   `set-summary` 两个子命令。
 - 无头测试的 React 替身修了一个会让 hook 状态每次渲染都丢的路径 bug。
+- `tests/host.mjs` 在拿不到 `zod` 的环境（比如裸克隆）里不再以模块错误崩栈，
+  改为打印 `SKIP` 跳过清单相关的 D / E 两段；`package.json` 补上 `zod` 的
+  peer 声明（由宿主 DSH 提供，标 optional）。只影响测试，不改运行时行为。
 
 ## v-alpha-0.2 — 分支画布 + 叙事类判定
 
