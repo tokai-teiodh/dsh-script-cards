@@ -125,9 +125,23 @@ try {
   eq(fs.existsSync(OUTSIDE), false, 'nothing was written outside root')
 
   // ── D. manifest shape + both ends agree ────────────────────────────────────
+  // lib/typert.js resolves `zod` from the DSH profile this package is installed
+  // into — exactly how it resolves at runtime — so a bare clone has no zod.
+  // Say so and skip D+E rather than dying on a module error.
+  manifest_sections: {
   console.log('\nD. TYPERT manifest')
-  const manifest = (await import(pathToFileURL(path.join(PKG, 'lib', 'typert.js')).href)).TYPERT
-  const typ = await import(pathToFileURL(path.join(PKG, 'lib', 'typert.js')).href)
+  let typ
+  try {
+    typ = await import(pathToFileURL(path.join(PKG, 'lib', 'typert.js')).href)
+  } catch (e) {
+    if (!e || e.code !== 'ERR_MODULE_NOT_FOUND') throw e
+    console.log('  SKIP  lib/typert.js cannot load outside a DSH profile:')
+    console.log('        ' + String(e.message).split('\n')[0])
+    console.log('        D and E need a resolvable `zod`. Run the suite from')
+    console.log('        profiles/<profile>/node_modules/dsh-script-cards to cover them.')
+    break manifest_sections
+  }
+  const manifest = typ.TYPERT
   eq(typ.default, manifest, 'the module also has a default export of the same manifest')
   eq(manifest.package, 'dsh-script-cards', 'manifest.package matches the package name')
   eq(manifest.face, 'host', "manifest.face is 'host'")
@@ -198,6 +212,7 @@ try {
     ok(d.parameters.every((p) => p.codec.mode === 'strict'), endpoint + ': strict client codecs')
     ok(RESERVED_NAMES.indexOf(d.method) === -1, endpoint + ': client method name is not reserved')
   }
+  } // end manifest_sections
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true })
 }

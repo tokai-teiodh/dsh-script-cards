@@ -6,6 +6,12 @@
 
 源码在 `src/`，`lib/client.js` 由 `node scripts/build.mjs` 拼装生成，不要直接改产物。
 
+## 未发布（Unreleased）
+
+- 测试：`tests/host.mjs` 在拿不到 `zod` 的环境（裸克隆）里不再以模块错误崩掉，
+  改为打印 `SKIP` 并跳过 D / E 两段；`package.json` 补上 `zod` 的 peer 声明。
+- 只影响测试与元数据，不改运行时行为。版本号待发布时再定。
+
 ## v-alpha-1.0 — 落盘桥 + 两级分支画布
 
 面板角标 `v-alpha-1.0`，包版本 `1.0.0`。
@@ -112,10 +118,10 @@
   列出缺简介的卡片，生成后用 `cards.py set-summary` 只改 `summary` / `updated` 两行
   写回（正文一个字节不动）。面板会把缺简介的卡片数点出来。
 - 测试分两半，都在 `npm run check` 里：
-  - `tests/host.mjs`（132 条断言）——**宿主半边**：六个文件原语在真临时目录上跑通、
+  - `tests/host.mjs`（171 条断言）——**宿主半边**：六个文件原语在真临时目录上跑通、
     UTF-8 中文往返、路径白名单六种越界全被拒、`typertRemote` 绑定形状、
     清单形状，以及**浏览器半边挂上去的 descriptors 与宿主清单逐端点对齐**。
-  - `tests/smoke.mjs`（96 条断言）——**客户端半边**：两族卡片、两级画布、导航栏、
+  - `tests/smoke.mjs`（107 条断言）——**客户端半边**：两族卡片、两级画布、导航栏、
     四种卡片形态、右键菜单、缩放平移、展开动画，以及编辑真的写回卡片文件 / 图谱文件。
 - `cards.py` 同步扩展：新增 chapter / node / condition / result 四种类型，
   frontmatter 白名单加上 `code / chapter / mode / color`，并新增 `summaries` /

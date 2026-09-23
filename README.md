@@ -184,6 +184,10 @@ npm run check   # 构建一致性 + 三个 node --check + 两套无头测试
   缩放平移、展开动画、目录名可配置、色卡可自定义，以及**编辑真的写回了
   卡片文件与图谱文件**。
 
+> `tests/host.mjs` 的 D / E 两段会加载 `lib/typert.js`，而它跟运行时一样从**安装它的
+> 那个 DSH profile** 解析 `zod`。所以在裸克隆里跑，这两段会打印 `SKIP` 并跳过；
+> 想让它们真正跑起来，请在 `profiles/<profile>/node_modules/dsh-script-cards` 里执行。
+
 测不到的部分（真 DOM 布局、CSS、SVG 箭头、真实 Typert 网关）要靠真机重启验证。
 
 ---
