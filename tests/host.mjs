@@ -157,7 +157,7 @@ try {
     eq(inv.invocation.kind, 'direct', inv.method + ': direct receiver')
     eq(inv.result.mode, 'strict', inv.method + ': result codec is strict')
     ok(!!inv.result.schema && !!inv.result.schema._zod, inv.method + ': result codec is a zod v4 schema')
-    // ⚠ 这条是 v-alpha-1.0 翻过的车：网关挂载客户端清单时会拒绝任何与
+    // ⚠ 这条是 v0.1.0-alpha.1 翻过的车：网关挂载客户端清单时会拒绝任何与
     // RemoteNamespaceService 原型/保留字段同名的办法（`remove` 就在原型上），
     // 一旦撞上，$mount 抛错 → 命名空间装不上 → 面板整体只读。
     ok(RESERVED_NAMES.indexOf(inv.method) === -1, inv.method + ': does not collide with a reserved namespace name')

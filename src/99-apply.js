@@ -23,7 +23,7 @@ function apply(ctx) {
   const api = makeApi(ctx, wf)
 
   // 便宜的自我检查：方法名一旦撞上 RemoteNamespaceService 的保留名，$mount 会被网关
-  // 拒绝（v-alpha-1.0 第一版就是这样整体只读的），所以这里先喊一声。
+  // 拒绝（v0.1.0-alpha.1 第一版就是这样整体只读的），所以这里先喊一声。
   const clash = CLIENT_TYPERT.descriptors.filter(function (d) { return REMOTE_RESERVED.indexOf(d.method) !== -1 })
   if (clash.length) {
     console.error('[script-cards] 落盘桥的方法名与网关保留名冲突，$mount 一定会失败：' +

@@ -12,12 +12,16 @@
 // What it does NOT cover: real DOM layout, CSS, SVG markers, and the real
 // Typert gateway. Those still need a DSH restart.
 
+import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createHarness } from './mini-react.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
-const CLIENT = path.join(HERE, '..', 'lib', 'client.js')
+const PKG = path.join(HERE, '..')
+const CLIENT = path.join(PKG, 'lib', 'client.js')
+// 角标必须等于包自己声明的 versionTag —— 别在这里写死版本号
+const VERSION_TAG = JSON.parse(fs.readFileSync(path.join(PKG, 'package.json'), 'utf8')).dsh.versionTag
 
 const ROOT = 'C:/proj'
 const ARCHIVE_DIR = ROOT + '/剧本档案'
@@ -209,7 +213,7 @@ await tick()
 
 // ── A. grid view: archive family only ────────────────────────────────────────
 console.log('\nA. grid view (archive family)')
-has(view.text(), 'v-alpha-1.0', 'header badge is v-alpha-1.0')
+has(view.text(), VERSION_TAG, 'header badge is ' + VERSION_TAG)
 has(view.text(), '9 张存档卡', 'archive-card count is right (branch family excluded)')
 eq(view.findAll('sc-tile').length, 9, 'exactly 9 tiles', view.findAll('sc-tile').length)
 const tileTitles = view.findAll('sc-tiletitle').map((n) => view.textOf(n))

@@ -1,11 +1,11 @@
 # dsh-script-cards
 
-> A script-archive panel plugin for **DeepSeek Harness (DSH)** — it turns a project's
-> card files into a two-level branch canvas you can edit in the browser, and writes
-> every change straight back to disk.
+> A **DeepSeek Harness (DSH)** panel for script archives. It lays a project's Markdown
+> cards out as a card grid and a two-level branch canvas, and writes your edits back
+> to the card files.
 
-给 **DeepSeek Harness（DSH）** 用的剧本档案面板：把项目里的卡片文件排成两级分支画布，
-在浏览器里直接改，改动**真的写回磁盘**（随项目进 git，不是存在浏览器里）。
+给 **DeepSeek Harness（DSH）** 用的剧本档案面板：把项目里的卡片文件排成方片网格和
+两级分支画布，在浏览器里直接改，改动写回卡片文件（结构进 git，不是存在浏览器里）。
 
 它来自一个实际的剧本写作流程：剧本跨很多次会话，人物、设定、待定问题、章节与
 情节分支都需要一个能一眼看完的地方。这个面板就是那个地方。

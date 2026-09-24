@@ -1,8 +1,8 @@
 {
   "name": "dsh-script-cards",
-  "version": "1.0.0",
+  "version": "0.1.0-alpha.1",
   "private": true,
-  "description": "DeepSeek Harness 的剧本档案面板：方片网格 + 两级分支画布（章节 / 节点 / 条件 / 结果），卡片文件经宿主半边 Typert 桥读写、随项目进 git。Script-archive panel for DeepSeek Harness: a card grid plus a two-level branch canvas, with every edit written straight back to the project's card files.",
+  "description": "DSH 剧本档案面板：把项目里的卡片排成方片网格和两级分支画布，拖动、连线、染色，改动直接写回卡片文件。Card grid and branch canvas for a project's Markdown cards inside DeepSeek Harness; edits go straight back to the files.",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -57,7 +57,7 @@
     "node": ">=20"
   },
   "dsh": {
-    "versionTag": "v-alpha-1.0",
+    "versionTag": "v0.1.0-alpha.1",
     "bundle": {
       "patch": "./cordis.patch.yml"
     },

@@ -22,7 +22,7 @@
 // ⚠ 方法名不能撞 RemoteNamespaceService 的保留名。网关挂载前会跑
 //   `assertMethodAvailable`：REMOTE_NAMESPACE_FIELDS（ctx / empty / invokeRemote /
 //   methods / name / namespace）以及原型上的任何名字都拒。**`remove` 就在原型上**，
-//   v-alpha-1.0 第一版因此 $mount 直接抛错、命名空间没装成，面板整体只读。
+//   v0.1.0-alpha.1 第一版因此 $mount 直接抛错、命名空间没装成，面板整体只读。
 //   所以这里六个方法统一 `fs` 前缀，并在 tests/host.mjs 里断言它们不撞保留名。
 //
 // 每个方法第一个参数都是 `root`（档案目录的绝对路径），宿主半边据此划定边界：
