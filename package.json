@@ -1,6 +1,6 @@
 {
   "name": "dsh-script-cards",
-  "version": "0.1.0-alpha.6",
+  "version": "0.1.0",
   "private": true,
   "description": "DSH 剧本档案面板：把项目里的卡片排成方片网格和两级分支画布，拖动、连线、染色，改动直接写回卡片文件。Card grid and branch canvas for a project's Markdown cards inside DeepSeek Harness; edits go straight back to the files.",
   "type": "module",
@@ -58,7 +58,7 @@
     "node": ">=20"
   },
   "dsh": {
-    "versionTag": "v0.1.0-alpha.6",
+    "versionTag": "v0.1.0",
     "bundle": {
       "patch": "./cordis.patch.yml"
     },
