@@ -136,11 +136,14 @@ const CSS = `
 .sc-cardlist{margin:0;padding-left:14px}
 .sc-cardlist li{font-size:11.5px;line-height:1.6}
 /* 接口圆点：整个圆 + 空心（底是卡片自己的底色，只有一圈本色描边）。
-   16px 是偶数、偏移也是整数，圆心才落在整数像素上：14px 配 -7px 时，凡是行高是奇数
-   或者浮点的地方（选项行原来是 padding 撑出来的 28.67px），圆点就落在半像素上，栅格
-   化出来是一团发虚的椭圆 —— 用户报的「节点并不是正圆」就是这个。
-   悬停 / 选中时整亮；被当目标时整颗填实（原来是 scale(1.3)，缩放一样会让它发虚）。 */
-.sc-port{position:absolute;top:50%;margin-top:-8px;width:16px;height:16px;box-sizing:border-box;padding:0;border-radius:50%;background:var(--dsw-alias-bg-base);border:2px solid var(--sc-accent,var(--dsw-alias-brand-primary));cursor:crosshair;opacity:.65}
+   三件事缺一不可，少一件就「不是正圆」：
+   ① 16px 偶数、偏移 ±8px 整数 —— 圆心落在整数像素上（半像素的圆栅格化后是发虚的椭圆；
+      选项行以前是 padding 撑出的 28.67px，正是这里出的问题）；
+   ② 描边 **1px** —— 2px 的圈套在 16px 的点上，1 倍缩放下栅格化成一个厚重的八边形
+      （放大 10 倍看就是一个多边形的甜甜圈），细圈才读得出「是个圆」；
+   ③ 尺寸恒定、不用 transform 缩放（scale(1.3) 那种同样会发虚）。
+   悬停 / 选中时整亮；被当目标时整颗填实。 */
+.sc-port{position:absolute;top:50%;margin-top:-8px;width:16px;height:16px;box-sizing:border-box;padding:0;border-radius:50%;background:var(--dsw-alias-bg-base);border:1px solid var(--sc-accent,var(--dsw-alias-brand-primary));cursor:crosshair;opacity:.9}
 .sc-port.in{left:-8px}
 .sc-port.out{right:-8px}
 .sc-card:hover .sc-port,.sc-card.on .sc-port{opacity:1}

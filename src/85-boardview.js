@@ -58,6 +58,16 @@ function BoardView(props) {
     return { x: (clientX - box.left - view.x) / view.s, y: (clientY - box.top - view.y) / view.s }
   }
 
+  // 拖动中的卡片用「手在哪」而不是图谱里的坐标：卡片本身是这么画的，连线也得这么画，
+  // 否则拖卡片时线钉在原地、松手才跳过去（用户报的「连线不能实时渲染」）。
+  // 放在组件最上面：渲染、连线起点、右键菜单都要用，函数声明会提升。
+  function liveRect(k) {
+    const r = rects[k]
+    if (!r) return r
+    if (drag && drag.key === k) return { x: drag.x, y: drag.y, w: r.w, h: r.h, placed: r.placed }
+    return r
+  }
+
   function go(entry) {
     const next = hist.slice(0, hi + 1)
     next.push(entry)
@@ -412,7 +422,7 @@ function BoardView(props) {
   function linkStartPoint(l) {
     if (l && isFinite(l.ox) && isFinite(l.oy)) return { x: l.ox, y: l.oy }
     const rec = nodeRec(graph, l.from || '')
-    const rect = rects[l.from] || { x: 0, y: 0, w: 0, h: 0 }
+    const rect = liveRect(l.from) || { x: 0, y: 0, w: 0, h: 0 }
     return outPoint(rect, choiceIndexOf(l), (rec.choices || []).length)
   }
 
@@ -634,8 +644,9 @@ function BoardView(props) {
 
   const edgeEls = []
   for (const e of edges) {
-    const a = rects[e.from]
-    const b = rects[e.to]
+    // liveRect：拖动中的卡片要按它当前被画在哪算，线才会实时跟着走。
+    const a = liveRect(e.from)
+    const b = liveRect(e.to)
     if (!a || !b || !a.placed || !b.placed) continue
     const fromCard = scope.filter(function (c) { return cardKey(c) === e.from })[0]
     let ci = -1

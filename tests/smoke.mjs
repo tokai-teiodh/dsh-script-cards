@@ -731,12 +731,14 @@ has(rule('.sc-choices'), 'left:100%', 'the choice column hangs off the card to t
 const portRule = rule('.sc-port')
 has(portRule, 'border-radius:50%', 'a port is a circle')
 ok(portRule.indexOf('background:var(--sc-accent') === -1, 'a port is hollow — the accent colour is the ring, not the fill', portRule)
-eq((portRule.match(/opacity:(\S+?)[;}]/) || [])[1], '.65', 'ports are visible without hunting for them with the mouse')
-// 圆要「正」：尺寸与偏移都得是偶数/整数，圆心才落在整数像素上 —— 半像素的圆栅格化
-// 出来是一个发虚的椭圆，用户报的「节点并不是正圆」就是这个。
+eq((portRule.match(/opacity:(\S+?)[;}]/) || [])[1], '.9', 'ports are visible without hunting for them with the mouse')
+// 圆要「正」，三条：尺寸/偏移整数、描边够细、没有 transform 缩放。
+// ① 半像素的圆栅格化后是一个发虚的椭圆；② 16px 的点套 2px 的圈，1 倍缩放下栅格化出来
+// 是一个厚重的八边形（放大 10 倍看就是多边形的甜甜圈）—— 这两条都是用户报的「不是正圆」。
 has(portRule, 'width:16px', 'a port is 16px wide')
 has(portRule, 'height:16px', 'and 16px tall — an equal-sided box plus a 50% radius is the only real circle')
 has(portRule, 'margin-top:-8px', 'the vertical offset is exactly half of that box')
+has(portRule, 'border:1px solid', 'the ring is 1px — a 2px ring on a 16px dot rasterises into a chunky octagon')
 has(rule('.sc-port.in'), 'left:-8px', 'the in port is offset by exactly half its size')
 has(rule('.sc-port.out'), 'right:-8px', 'the out port too')
 ok(portRule.indexOf('scale(') === -1, 'nothing scales a port (a transform on a 16px dot is what makes it fuzzy)', portRule)
@@ -931,6 +933,32 @@ view.window('keydown', keyEv('v', canvasNode, { ctrlKey: true }))
 await tick()
 await tick()
 ok(writes.length > writesX, 'with the canvas as the last click target the shortcut still works')
+
+// ── Y. a line follows the card while it is being dragged ────────────────────
+// 卡片是跟着手走的，但连线原来取的是图谱里的旧坐标：拖动期间线钉在原地、松手才跳过去
+// （用户报的「连线不能实时渲染」）。现在两边共用 liveRect，拖动过程中就该对上。
+console.log('\nY. lines follow the card while it is being dragged')
+const edgeStartXY = () => {
+  const el = view.findAll('sc-edgehit').filter((n) => n.props['data-edge'] === N1 + '->' + N2)[0]
+  const m = /^M(-?[\d.]+),(-?[\d.]+)/.exec(String(el && el.props.d))
+  return m ? { x: Number(m[1]), y: Number(m[2]) } : null
+}
+const yBefore = edgeStartXY()
+ok(!!yBefore, 'the edge between the two nodes is on the canvas')
+view.fire(cardNodeOf(N1), 'onPointerDown', { button: 0, clientX: 200, clientY: 200 })
+await tick()
+view.window('pointermove', { clientX: 260, clientY: 240 })
+await tick()
+const yDuring = edgeStartXY()
+const liveCard = cardNodeOf(N1)
+ok(!!yDuring && (yDuring.x !== yBefore.x || yDuring.y !== yBefore.y), 'the line moved while the drag is still going on', [yBefore, yDuring])
+eq(yDuring.x, liveCard.props.style.left + 184 + 8, 'the line starts at the right edge of where the card is right now')
+eq(yDuring.y, liveCard.props.style.top + 40, 'and at its vertical middle')
+view.window('pointerup', { clientX: 260, clientY: 240 })
+await tick()
+const yAfter = edgeStartXY()
+eq(yAfter.x, yDuring.x, 'dropping it does not jump the line somewhere else')
+eq(yAfter.y, yDuring.y, 'nor vertically')
 
 console.log('\n' + (failures === 0 ? 'ALL GREEN' : 'FAILURES: ' + failures) + '  (' + checks + ' checks, ' + view.renderCount() + ' renders)')
 if (failures !== 0) process.exit(1)

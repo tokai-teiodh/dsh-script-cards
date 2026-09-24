@@ -31,6 +31,8 @@ const has = (name) => process.argv.indexOf('--' + name) !== -1
 
 const THEME = arg('theme', 'dark')
 const ZOOM = Number(arg('zoom', '1')) || 1
+// 设备像素比：默认 2 好看清楚；排查「圆点不正圆」这类栅格化问题要用真机那一档（Windows 100% = 1）
+const DPR = Number(arg('dpr', '2')) || 2
 const PROBE = has('probe')
 const OUT = arg('out', path.join(PKG, '.visual', 'canvas-' + THEME + '.png'))
 
@@ -222,7 +224,7 @@ async function shoot(browser, htmlFile, outPng) {
   const child = spawn(browser, [
     '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
     '--remote-debugging-port=' + port, '--user-data-dir=' + profile,
-    '--window-size=900,700', '--force-device-scale-factor=2', '--hide-scrollbars',
+    '--window-size=900,700', '--force-device-scale-factor=' + DPR, '--hide-scrollbars',
     'about:blank',
   ], { stdio: 'ignore', detached: true })
 
@@ -309,8 +311,10 @@ console.log('tokens : ' + (asar || '内置兜底'))
 const htmlFile = path.join(os.tmpdir(), 'dsh-cards-visual-' + THEME + '-' + ZOOM + '.html')
 fs.writeFileSync(htmlFile, buildHtml(tokenCss))
 const probe = await shoot(browser, htmlFile, OUT)
-console.log('截图   : ' + OUT + '  (' + fs.statSync(OUT).size + ' bytes, theme=' + THEME + ', zoom=' + ZOOM + ')')
+console.log('截图   : ' + OUT + '  (' + fs.statSync(OUT).size + ' bytes, theme=' + THEME + ', zoom=' + ZOOM + ', dpr=' + DPR + ')')
 if (probe) {
+  // 报告同时落一份 JSON，方便再拿它去放大某个元素的像素（排查圆点/描边这类栅格化问题）
+  fs.writeFileSync(path.join(path.dirname(OUT), 'probe.json'), JSON.stringify(probe, null, 1))
   console.log(JSON.stringify(probe, null, 1))
   // 这两条是「画布能不能看」的底线，顺手当断言用
   const flat = probe.items.filter((x) => x.what.indexOf('edge#') === 0)
