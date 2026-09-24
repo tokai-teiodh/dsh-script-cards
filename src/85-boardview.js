@@ -8,6 +8,8 @@
 // 画布：空白处左键拖动平移（中键、Alt+左键也行），滚轮缩放（以指针为中心），
 //       Shift+滚轮左右移、Alt+滚轮上下移。
 // 展开动画：先把视角平移到卡片居中（相对位置不变）→ 卡片放大 → 背景虚化。
+// 快捷键（复制/粘贴/展开/删除）只在「最近一次点击落在画布上」时生效 —— 对话输入框是
+//      contenteditable，无条件吃全局 Ctrl+V 会把聊天框的粘贴整个吃掉。
 // ══════════════════════════════════════════════════════════════════════════════
 
 // FAV_KEY 在 src/00-head.js 里声明（跨片段共享作用域，只能声明一次）。
@@ -120,14 +122,20 @@ function BoardView(props) {
 
   function addEdge(from, to, choice) {
     if (!from || !to || from === to) return
-    if (graph.edges.some(function (e) { return e.from === from && e.to === to && String(e.choice || '') === String(choice || '') })) return
+    const cid = String(choice || '')
+    const mine = function (e) { return e.from === from && String(e.choice || '') === cid }
+    // 一个选项只能有一条出线：改连到别的卡片时先把旧的那条摘掉。不摘的话同一个选项
+    // 会拖着两条线、指向两个节点（用户报的连接 bug 之一）。
+    const kept = graph.edges.filter(function (e) { return !mine(e) })
+    const already = graph.edges.some(function (e) { return mine(e) && e.to === to })
+    if (already && kept.length === graph.edges.length) return
     const next = {
       version: 1, chapters: graph.chapters.slice(), nodes: Object.assign({}, graph.nodes),
-      edges: graph.edges.concat([{ from: from, to: to, label: '', choice: choice || '' }]),
+      edges: kept.concat([{ from: from, to: to, label: '', choice: cid }]),
     }
     // 从某个选项的出口拉出去的连线，同时把「这一项通向哪」记进选项本身。
     // 不记的话，展开面板里永远显示「还没连到节点」，选项与节点就断成两截。
-    if (choice) next.nodes[from] = bindChoice(next.nodes[from], choice, to)
+    if (cid) next.nodes[from] = bindChoice(next.nodes[from], cid, to)
     props.onGraph(next)
   }
 
@@ -266,13 +274,19 @@ function BoardView(props) {
 
   const panRef = React.useRef(null)
   const dockRef = React.useRef(null)
+  // 「最近一次按下是不是落在画布上」。快捷键只在它为真时才生效 —— 否则打开面板以后
+  // 连对话输入框里的 Ctrl+V 都会被吃掉（对话输入框是 contenteditable，不是 input）。
+  const boardHot = React.useRef(false)
 
   React.useEffect(function () {
     function move(e) { movePointers(e) }
     function up(e) { upPointers(e) }
     function wheel(e) { onWheel(e) }
+    function down(e) { markHot(e) }
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
+    // 捕获阶段记「按在哪」：卡片和选项自己都 stopPropagation，冒泡阶段收不到。
+    window.addEventListener('pointerdown', down, true)
     // 滚轮得自己挂，而且不能被当成 passive：React 是把 onWheel 注册成 passive 监听器的，
     // 里面调 preventDefault() 根本无效 —— 于是滚轮一边缩放，页面一边跟着滚/跟着缩放。
     const el = canvasRef.current
@@ -280,9 +294,32 @@ function BoardView(props) {
     return function () {
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointerdown', down, true)
       if (el && typeof el.removeEventListener === 'function') el.removeEventListener('wheel', wheel)
     }
   })
+
+  function markHot(e) {
+    const box = canvasBox()
+    const x = Number(e && e.clientX) || 0
+    const y = Number(e && e.clientY) || 0
+    boardHot.current = x >= box.left && x <= box.left + box.width && y >= box.top && y <= box.top + box.height
+  }
+
+  /** 焦点在输入框 / 可编辑区（对话输入框就是 contenteditable）时，快捷键一律让路。 */
+  function isEditable(el) {
+    let node = el
+    let depth = 0
+    while (node && depth++ < 8) {
+      const tag = node.tagName ? String(node.tagName).toLowerCase() : ''
+      if (tag === 'input' || tag === 'textarea' || tag === 'select') return true
+      if (node.isContentEditable === true) return true
+      const attr = node.getAttribute ? node.getAttribute('contenteditable') : null
+      if (attr === '' || attr === 'true' || attr === 'plaintext-only') return true
+      node = node.parentNode
+    }
+    return false
+  }
 
   /** 从这个元素往上找卡片 key（真实 DOM 里靠 data-key 认卡片）。 */
   function keyUnder(el) {
@@ -341,11 +378,51 @@ function BoardView(props) {
     setLink(linkRef.current)
   }
 
-  /** 这条橡皮筋是从哪个选项拉出来的（-1 = 从卡片本身的出口）。 */
+  /** 这根橡皮筋是从哪个选项拉出来的（-1 = 从卡片本身的出口）。 */
   function choiceIndexOf(l) {
     if (!l || !l.choice) return -1
     const rec = nodeRec(graph, l.from)
     return (rec.choices || []).findIndex(function (ch) { return ch.id === l.choice })
+  }
+
+  /**
+   * 这根线从哪个像素点起笔。真实 DOM 里直接量那颗圆点的中心 —— 选项行高、卡片展开
+   * 之后的高度怎么变都对得上；量不到（无头渲染器没有布局）才退回按几何算。
+   */
+  function portPoint(e, card, choice) {
+    const el = e && e.currentTarget
+    if (el && typeof el.getBoundingClientRect === 'function') {
+      const r = el.getBoundingClientRect()
+      if (r && (r.width || r.height)) {
+        const box = canvasBox()
+        return {
+          x: (r.left + r.width / 2 - box.left - view.x) / view.s,
+          y: (r.top + r.height / 2 - box.top - view.y) / view.s,
+        }
+      }
+    }
+    const k = cardKey(card)
+    const rec = nodeRec(graph, k)
+    const rect = rects[k]
+    if (!rect) return { x: 0, y: 0 }
+    const i = !choice ? -1 : (rec.choices || []).findIndex(function (ch) { return ch.id === choice })
+    return outPoint(rect, i, (rec.choices || []).length)
+  }
+
+  function linkStartPoint(l) {
+    if (l && isFinite(l.ox) && isFinite(l.oy)) return { x: l.ox, y: l.oy }
+    const rec = nodeRec(graph, l.from || '')
+    const rect = rects[l.from] || { x: 0, y: 0, w: 0, h: 0 }
+    return outPoint(rect, choiceIndexOf(l), (rec.choices || []).length)
+  }
+
+  function startLink(e, card, choice) {
+    // 只认左键：右键在端口上应该还是弹菜单，不能顺手拉出一根线来。
+    if (e && e.button !== undefined && e.button !== null && e.button !== 0) return
+    const k = cardKey(card)
+    const p = portPoint(e, card, choice)
+    linkRef.current = { from: k, choice: choice || '', x: p.x, y: p.y, ox: p.x, oy: p.y }
+    setLink(linkRef.current)
   }
 
   function dropLink(e, card) {
@@ -413,8 +490,12 @@ function BoardView(props) {
 
   React.useEffect(function () {
     function onKey(e) {
-      const tag = e.target && e.target.tagName ? String(e.target.tagName).toLowerCase() : ''
-      if (tag === 'input' || tag === 'textarea') return
+      // 焦点在输入框 / 可编辑区里一律不动手：对话输入框是 contenteditable（不是
+      // input/textarea），早先这里只看 tagName，于是打开面板以后在对话里按 Ctrl+V
+      // 会被这里 preventDefault 掉 —— 用户报的「打开侧边栏后对话框粘不进字」。
+      if (isEditable(e.target)) return
+      // 最近一次点击不在画布上（比如刚点过对话输入框）也不动手，把快捷键还给宿主。
+      if (!boardHot.current) return
       const cur = sel ? scope.filter(function (c) { return cardKey(c) === sel })[0] : null
       if (matchKey(e, 'mod+c') && cur) { e.preventDefault(); copyCard(cur, false); return }
       if (matchKey(e, 'mod+x') && cur) { e.preventDefault(); copyCard(cur, true); removeFromCanvas(cur); return }
@@ -558,11 +639,13 @@ function BoardView(props) {
     if (!a || !b || !a.placed || !b.placed) continue
     const fromCard = scope.filter(function (c) { return cardKey(c) === e.from })[0]
     let ci = -1
+    let ccount = 0
     if (e.choice) {
       const rec = nodeRec(graph, e.from)
+      ccount = (rec.choices || []).length
       ci = (rec.choices || []).findIndex(function (ch) { return ch.id === e.choice })
     }
-    const pa = outPoint(a, ci)
+    const pa = outPoint(a, ci, ccount)
     const pb = inPoint(b)
     const on = sel === e.from || sel === e.to
     const d = edgePath(pa, pb)
@@ -593,7 +676,8 @@ function BoardView(props) {
       expanded: !!isExpanding,
       childNodes: c.type === 'chapter' ? nodesOfChapter(cards, graph, k) : [],
       onOpenNode: function (n) { props.onOpenCard(n) },
-      hotPort: !!link && link.from !== k,
+      linkLive: !!link,
+      linkFrom: link ? link.from : null,
       hotChoice: link && link.from === k ? link.choice : '',
       onCardDown: onCardDown,
       onDouble: function (card) {
@@ -720,20 +804,25 @@ function BoardView(props) {
         React.createElement('div', { className: 'sc-dots' }),
         React.createElement('svg', { className: 'sc-edges', width: 8000, height: 8000 },
           React.createElement('defs', null,
-            React.createElement('marker', { id: 'sc-arrow', markerWidth: 9, markerHeight: 9, refX: 7, refY: 3, orient: 'auto', markerUnits: 'strokeWidth' },
-              React.createElement('path', { d: 'M0,0 L0,6 L7,3 z', className: 'sc-arrowhead' })),
-            React.createElement('marker', { id: 'sc-arrow-on', markerWidth: 9, markerHeight: 9, refX: 7, refY: 3, orient: 'auto', markerUnits: 'strokeWidth' },
-              React.createElement('path', { d: 'M0,0 L0,6 L7,3 z', className: 'sc-arrowhead-on' }))
+            // markerUnits 用 userSpaceOnUse：箭头是固定大小，不再跟着 stroke-width 一起
+            // 放大（原来普通线是 9×1.6、高亮线是 9×2.2，同一个箭头两个尺寸，看着就杂）。
+            React.createElement('marker', { id: 'sc-arrow', markerWidth: 8, markerHeight: 8, refX: 6, refY: 3, orient: 'auto', markerUnits: 'userSpaceOnUse' },
+              React.createElement('path', { d: 'M0,0 L0,6 L6,3 z', className: 'sc-arrowhead' })),
+            React.createElement('marker', { id: 'sc-arrow-on', markerWidth: 8, markerHeight: 8, refX: 6, refY: 3, orient: 'auto', markerUnits: 'userSpaceOnUse' },
+              React.createElement('path', { d: 'M0,0 L0,6 L6,3 z', className: 'sc-arrowhead-on' }))
           ),
-          edgeEls
+          // 这一刀不能少：.sc-edges 自己被挪到 -EDGE_PAD，路径坐标是画布坐标。
+          React.createElement('g', { transform: 'translate(' + EDGE_PAD + ',' + EDGE_PAD + ')' }, edgeEls)
         ),
         link ? React.createElement('svg', { className: 'sc-edges', width: 8000, height: 8000 },
-          React.createElement('path', {
-            className: 'sc-edge temp',
-            // 从「你拉的那一项」自己的出口起笔，而不是卡片右侧正中：分歧节点上选项有
-            // 好几个，起点错了整条橡皮筋就是歪的。
-            d: edgePath(outPoint(rects[link.from] || { x: 0, y: 0, w: 0, h: 0 }, choiceIndexOf(link)), { x: link.x, y: link.y }),
-          })
+          React.createElement('g', { transform: 'translate(' + EDGE_PAD + ',' + EDGE_PAD + ')' },
+            React.createElement('path', {
+              className: 'sc-edge temp',
+              // 从「你拉的那一项」自己的出口起笔（真实 DOM 里那颗圆点的中心），而不是卡片
+              // 右侧正中：分歧节点上选项有好几个，起点错了整条橡皮筋就是歪的。
+              d: edgePath(linkStartPoint(link), { x: link.x, y: link.y }),
+            })
+          )
         ) : null,
         cardEls
       ),

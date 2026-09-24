@@ -462,9 +462,12 @@ has(view.find('sc-stage').props.style.transform, 'scale(', 'the canvas scales th
 ok(!/NaN/.test(String(view.find('sc-stage').props.style.transform)), 'the transform stays numeric')
 
 // ── K. keyboard shortcuts ────────────────────────────────────────────────────
+// 快捷键只在「最近一次点击落在画布上」时生效，所以先照着真实顺序派发一次 pointerdown
+// （捕获阶段挂在 window 上那颗，见 X 段）。
 console.log('\nK. keyboard shortcuts')
 const selCard = view.findAll('sc-card').filter((n) => n.props['data-key'] === N2)[0]
 view.fire(selCard, 'onPointerDown', { button: 0, clientX: 100, clientY: 100 })
+view.window('pointerdown', { clientX: 100, clientY: 100 })
 await tick()
 view.window('pointerup', { clientX: 100, clientY: 100 })
 await tick()
@@ -728,7 +731,62 @@ has(rule('.sc-choices'), 'left:100%', 'the choice column hangs off the card to t
 const portRule = rule('.sc-port')
 has(portRule, 'border-radius:50%', 'a port is a circle')
 ok(portRule.indexOf('background:var(--sc-accent') === -1, 'a port is hollow — the accent colour is the ring, not the fill', portRule)
-eq((portRule.match(/opacity:(\S+?)[;}]/) || [])[1], '.45', 'ports are visible without hunting for them with the mouse')
+eq((portRule.match(/opacity:(\S+?)[;}]/) || [])[1], '.65', 'ports are visible without hunting for them with the mouse')
+// 圆要「正」：尺寸与偏移都得是偶数/整数，圆心才落在整数像素上 —— 半像素的圆栅格化
+// 出来是一个发虚的椭圆，用户报的「节点并不是正圆」就是这个。
+has(portRule, 'width:16px', 'a port is 16px wide')
+has(portRule, 'height:16px', 'and 16px tall — an equal-sided box plus a 50% radius is the only real circle')
+has(portRule, 'margin-top:-8px', 'the vertical offset is exactly half of that box')
+has(rule('.sc-port.in'), 'left:-8px', 'the in port is offset by exactly half its size')
+has(rule('.sc-port.out'), 'right:-8px', 'the out port too')
+ok(portRule.indexOf('scale(') === -1, 'nothing scales a port (a transform on a 16px dot is what makes it fuzzy)', portRule)
+// 选项列的几何：行高固定、列顶由 JS 算（行内 top），＋ 按钮排在最后一行下面。
+has(rule('.sc-choice'), 'height:30px', 'option rows are a fixed height, so the rows below them cannot drift')
+ok(rule('.sc-choice').indexOf('overflow:hidden') === -1, 'an option row does not clip its own port either', rule('.sc-choice'))
+ok(rule('.sc-choices').indexOf('top:') === -1, 'the column top is not hard-coded in CSS any more (the geometry supplies it)')
+// 悬停不许改尺寸：`height:0` → `:hover{height:5px}` 这种写法会让指针和元素互相追着跑
+// （滑块出现把内容顶走 → 取消悬停 → 缩回去 → 又悬停），整块布局跟着高频抖。
+ok(rule('.sc-tags').indexOf('scrollbar-width:thin') !== -1, 'the tag strip reserves its scrollbar space instead of toggling it on hover')
+eq((rule('.sc-tags::-webkit-scrollbar') || '').indexOf('height:0'), -1, 'the tag strip scrollbar does not appear/disappear on hover')
+has(rule('.sc-tags:hover::-webkit-scrollbar-thumb'), 'background', 'hovering only recolours the thumb, it does not resize anything')
+// 连线必须是看得见的颜色：--dsw-alias-border-l2 是 12% 白，画成线等于全透明。
+const edgeRule = rule('.sc-edge')
+has(edgeRule, 'stroke:var(--dsw-alias-label-secondary)', 'edges use the secondary label colour, not a 12%-alpha border colour')
+ok(edgeRule.indexOf('border-l2') === -1, 'no edge rule uses the border colour any more', edgeRule)
+eq((edgeRule.match(/stroke-width:(\S+?)[;}]/) || [])[1], '1.5', 'the plain edge line is 1.5px')
+ok(rule('.sc-edge.on').indexOf('stroke-width') === -1, 'the highlighted edge redeclares no width — it inherits the same 1.5px')
+ok(rule('.sc-edge.temp').indexOf('stroke-width') === -1, 'and so does the rubber band')
+// 箭头固定尺寸：原来 markerUnits:strokeWidth 会跟着线宽放大，同一个箭头两个大小。
+const arrowMarker = (function () {
+  const stack = [view.tree()]
+  while (stack.length) {
+    const n = stack.pop()
+    if (!n) continue
+    if (n.props && n.props.id === 'sc-arrow') return n
+    if (n.children) for (const c of n.children) stack.push(c)
+  }
+  return null
+})()
+ok(!!arrowMarker, 'the arrow marker is in the tree')
+eq(arrowMarker && arrowMarker.props.markerUnits, 'userSpaceOnUse', 'the arrowhead is a fixed size, not scaled by the stroke width')
+// 连线层在 CSS 里被挪到 -4000（负坐标的卡片也能画），所以画路径的那个 <g> 必须原样补回来。
+// 不补，整层线画在屏幕外 4000px 处：连线标签是普通 DOM、按画布坐标摆的，于是「标签在、
+// 线不在」—— 用户报的「连线没有渲染出来，是全透明的」就是这个。
+const edgePad = Number((rule('.sc-edges').match(/left:-(\d+)px/) || [])[1])
+ok(edgePad > 0, 'the edge layer is offset to the upper left in CSS', rule('.sc-edges'))
+const allTransforms = (function () {
+  const out = []
+  const stack = [view.tree()]
+  while (stack.length) {
+    const n = stack.pop()
+    if (!n) continue
+    if (n.props && n.props.transform) out.push(String(n.props.transform))
+    if (n.children) for (const c of n.children) stack.push(c)
+  }
+  return out
+})()
+const shift = 'translate(' + edgePad + ',' + edgePad + ')'
+eq(allTransforms.filter((t) => t === shift).length, 1, 'exactly one group shifts the paths back by the CSS offset (' + shift + ')')
 
 // ── U. a rubber band starts at the option it was pulled from ─────────────────
 console.log('\nU. a link drag starts at that option')
@@ -748,6 +806,131 @@ ok(Number(start[2]) !== n3rec.cy + 40, "it is not the card's own out port either
 view.window('pointerup', { clientX: 300, clientY: 300 })
 await tick()
 ok(!view.findMaybe('temp'), 'the rubber band goes away when the drag ends')
+
+// 真实 DOM 里起笔点是**量**出来的（圆点自己的 getBoundingClientRect 中心），不是按公式
+// 猜的 —— 选项行高、卡片展开后的高度怎么变都对得上。这里塞一个假的 rect 证明它被用到。
+const measured = { getBoundingClientRect: () => ({ left: 8, top: 6, width: 16, height: 16 }) }
+view.fire(linkPort, 'onPointerDown', { clientX: 300, clientY: 300, currentTarget: measured })
+await tick()
+const temp2 = view.findAll('temp')[0]
+const start2 = /^M(-?[\d.]+),(-?[\d.]+)/.exec(String(temp2 && temp2.props.d))
+const tr = translateOf()
+eq(Number(start2[1]), (16 - tr.x) / (atZoom() / 100), 'with a real port element the start point is measured off it')
+view.window('pointerup', { clientX: 300, clientY: 300 })
+await tick()
+
+// ── V. one option keeps exactly one outgoing line ───────────────────────────
+// 把某个选项改连到别的卡片时，旧的那条线必须跟着走。早先是「再加一条」：同一个选项
+// 拖着两条线、分别指向两个节点，画布上就是一团乱麻（用户报的连接 bug 之一）。
+console.log('\nV. one option keeps exactly one outgoing line')
+function subtreeOf(root) {
+  const out = []
+  const visit = (n) => {
+    if (!n) return
+    out.push(n)
+    if (n.children) for (const c of n.children) visit(c)
+  }
+  visit(root)
+  return out
+}
+const cardNodeOf = (key) => view.findAll('sc-card').filter((n) => n.props['data-key'] === key)[0]
+const portOf = (key, which, choice) => {
+  const card = cardNodeOf(key)
+  if (!card) return undefined
+  return subtreeOf(card).filter((n) => n.kind === 'host' && n.props && n.props['data-port'] === which
+    && (choice === undefined || n.props['data-choice'] === choice))[0]
+}
+async function linkTo(fromKey, toKey, choice) {
+  view.fire(portOf(fromKey, 'out', choice), 'onPointerDown', { clientX: 300, clientY: 300 })
+  await tick()
+  view.fire(portOf(toKey, 'in'), 'onPointerUp', { clientX: 320, clientY: 320 })
+  await tick()
+}
+await linkTo(N3, N1, 'o1')
+eq(JSON.parse(files[GRAPH]).edges.filter((e) => e.from === N3 && e.choice === 'o1').length, 1, 'a drag from an option writes exactly one line')
+await linkTo(N3, N2, 'o1')
+const gV = JSON.parse(files[GRAPH])
+const o1edges = gV.edges.filter((e) => e.from === N3 && e.choice === 'o1')
+eq(o1edges.length, 1, 're-dragging that option moves its line instead of stacking a second one')
+eq(o1edges[0].to, N2, 'the line points at the new target')
+eq(gV.nodes[N3].choices.filter((c) => c.id === 'o1')[0].to, N2, 'and the option itself is bound to the new target')
+eq(view.findAll('sc-edgehit').filter((n) => n.props['data-edge'] === N3 + '->' + N1).length, 0, 'the old line is gone from the canvas')
+
+// 拉线时「哪里能落」得看得见：别的卡片入口点亮，源卡片自己不亮。
+const otherChoice = (JSON.parse(files[GRAPH]).nodes[N3].choices || [])[1].id
+view.fire(portOf(N3, 'out', otherChoice), 'onPointerDown', { clientX: 300, clientY: 300 })
+await tick()
+ok(String(portOf(N1, 'in').props.className).indexOf('hot') !== -1, 'while dragging, the other cards offer their in port as a drop target')
+ok(String(portOf(N3, 'in').props.className).indexOf('hot') === -1, 'the source card is not offered as its own target')
+ok(String(portOf(N3, 'out', otherChoice).props.className).indexOf('hot') !== -1, 'the port being dragged is highlighted')
+view.window('pointerup', { clientX: 980, clientY: 480 })
+await tick()
+ok(String(portOf(N1, 'in').props.className).indexOf('hot') === -1, 'the highlight goes away when the drag ends')
+
+// 选项列：整列按选项本身居中，＋ 按钮挂在最后一行下面（用户的要求）。
+const choiceCol = subtreeOf(cardNodeOf(N3)).filter((n) => n.kind === 'host' && String(n.props.className).indexOf('sc-choices') !== -1)[0]
+const rowCount = (JSON.parse(files[GRAPH]).nodes[N3].choices || []).length
+eq(rowCount, 2, 'the branch node has two options at this point')
+eq(choiceCol.props.style.top, Math.round(80 / 2 - (rowCount * 30 + (rowCount - 1) * 5) / 2), 'the option column is vertically centred on the card')
+ok(Number.isInteger(choiceCol.props.style.top), 'and it lands on a whole pixel')
+// 直接子元素（无头渲染器把 JSX 里的数组包成一层 frag，得自己拆开）。
+const directKids = (n) => {
+  const out = []
+  for (const c of n.children || []) {
+    if (c && c.kind === 'frag') { for (const g of c.children || []) out.push(g) }
+    else out.push(c)
+  }
+  return out.filter((x) => x && x.kind === 'host')
+}
+const colKids = directKids(choiceCol)
+eq(colKids.length, rowCount + 1, 'the column holds the option rows plus the ＋ button')
+eq(String(colKids[colKids.length - 1].props.className), 'sc-choiceadd', 'the ＋ option button hangs below the rows, so it never shifts the centring')
+
+// ── W. two options may lead to the same card ────────────────────────────────
+// 图谱去重必须带上 choice。只按 from+to 去重的话，第二次读盘会把「选项B → 结果」当成
+// 重复的扔掉 —— 卡片上写着已连接、线上却没有线。用户自己那份 分支.json 里正是这样：
+// 选项A 与 选项B 都写着指向「结果」，edges 里却只剩一条。
+console.log('\nW. two options may lead to the same card')
+await linkTo(N3, N2, otherChoice)
+eq(JSON.parse(files[GRAPH]).edges.filter((e) => e.from === N3 && e.to === N2).length, 2, 'each option got its own line to the same card')
+view.click(view.findAll('sc-navbtn').filter((n) => n.props.title === '刷新画布')[0])
+await tick()
+await tick()
+await tick()
+const gW = JSON.parse(files[GRAPH])
+eq(gW.edges.filter((e) => e.from === N3 && e.to === N2).length, 2, 'both lines survive a reload (dedupe has to key on the choice)')
+eq(view.findAll('sc-edgehit').filter((n) => n.props['data-edge'] === N3 + '->' + N2).length, 2, 'both lines are drawn on the canvas')
+eq((gW.nodes[N3].choices || []).filter((c) => c.to === N2).length, 2, 'both options still know where they go')
+
+// ── X. shortcuts stay out of the host chat box ──────────────────────────────
+// 对话输入框是 contenteditable（不是 input/textarea）。早先这里无条件吃全局 Ctrl+V，
+// 于是「打开剧本档案侧边栏之后，对话里粘不进字」（用户报的）。现在只有「最近一次点击
+// 落在画布上」时才接管，可编辑区里一律让路。
+console.log('\nX. shortcuts stay out of the host chat box')
+const keyEv = (key, target, extra) => Object.assign({ key, target, preventDefault() {}, stopPropagation() {} }, extra || {})
+const canvasNode = view.find('sc-canvas')
+const chatTarget = { tagName: 'DIV', isContentEditable: true, parentNode: null, getAttribute: () => null }
+const writesX = writes.length
+view.window('pointerdown', { clientX: 1300, clientY: 900 })
+await tick()
+view.window('keydown', keyEv('v', canvasNode, { ctrlKey: true }))
+await tick()
+await tick()
+eq(writes.length, writesX, 'a Ctrl+V after clicking outside the canvas is left to the host')
+view.window('pointerdown', { clientX: 200, clientY: 200 })
+await tick()
+view.window('keydown', keyEv('v', chatTarget, { ctrlKey: true }))
+await tick()
+await tick()
+eq(writes.length, writesX, 'a Ctrl+V typed in a contenteditable is left to the host')
+view.window('keydown', keyEv('delete', chatTarget))
+await tick()
+await tick()
+ok(!!view.findMaybe('sc-card'), 'and so are Delete / Ctrl+X — the host keeps its own editing keys')
+view.window('keydown', keyEv('v', canvasNode, { ctrlKey: true }))
+await tick()
+await tick()
+ok(writes.length > writesX, 'with the canvas as the last click target the shortcut still works')
 
 console.log('\n' + (failures === 0 ? 'ALL GREEN' : 'FAILURES: ' + failures) + '  (' + checks + ' checks, ' + view.renderCount() + ' renders)')
 if (failures !== 0) process.exit(1)

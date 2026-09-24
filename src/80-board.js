@@ -8,7 +8,17 @@ const CHOICE_W = 170
 const CHOICE_H = 30
 const CHOICE_GAP = 5
 const CHOICE_DX = 14
-const PORT_DX = 10
+// 出口圆点外缘离卡片边缘的距离：.sc-port 是 16px、偏移 -8px，圆心正落在卡片边上，
+// 所以线从卡片外 8px 处起笔、在卡片外 8px 处收笔，正好贴住圆点外缘。
+const PORT_DX = 8
+/**
+ * 连线层（.sc-edges）在 CSS 里被挪到 -EDGE_PAD,-EDGE_PAD，好让坐标为负的卡片也能画
+ * （卡片坐标可以是负的：往左上拖就会）。代价是 SVG 自己的用户坐标系也跟着挪了，
+ * 所以画路径的那个 <g> 必须原样补回 +EDGE_PAD —— 否则整层线画在屏幕外 4000px 处，
+ * 卡片和连线标签都在、只有线不见（用户报的「连线没有渲染出来，是全透明的」）。
+ * 改 CSS 里的 left/top 时这里必须一起改，测试会盯着两者是否一致。
+ */
+const EDGE_PAD = 4000
 const EXPAND_W = 460
 const EXPAND_H = 430
 
@@ -21,16 +31,36 @@ function cardRect(type, x, y) {
   return { x: x, y: y, w: s.w, h: s.h }
 }
 
-// 分歧节点的选项块位置（与 CSS .sc-choices 的 top:8px / gap:5px 对齐）。
-function choiceRect(rect, i) {
-  return { x: rect.x + rect.w + CHOICE_DX, y: rect.y + 8 + i * (CHOICE_H + CHOICE_GAP), w: CHOICE_W, h: CHOICE_H }
+/** 选项列的列高（不含下面的 ＋ 按钮）。 */
+function choiceListHeight(count) {
+  const n = Math.max(0, count || 0)
+  return n * CHOICE_H + Math.max(0, n - 1) * CHOICE_GAP
 }
 
-function outPoint(rect, choiceIndex) {
+/**
+ * 选项列相对卡片顶部的偏移：整列按选项高度上下居中（＋ 按钮不算在内，它挂在下面）。
+ * 取整，好让每一行、每一颗出口圆点都落在整数像素上 —— 半像素的圆点看着就不圆。
+ * 与 CSS 里 .sc-choices 的行内 top、.sc-choice 的 30px 行高一一对应。
+ */
+function choiceTop(rect, count) {
+  return Math.round(rect.h / 2 - choiceListHeight(count) / 2)
+}
+
+/** 第 i 个选项的位置（与 CSS .sc-choices / .sc-choice 的几何对齐）。 */
+function choiceRect(rect, i, count) {
+  return {
+    x: rect.x + rect.w + CHOICE_DX,
+    y: rect.y + choiceTop(rect, count) + i * (CHOICE_H + CHOICE_GAP),
+    w: CHOICE_W,
+    h: CHOICE_H,
+  }
+}
+
+function outPoint(rect, choiceIndex, count) {
   if (choiceIndex === undefined || choiceIndex === null || choiceIndex < 0) {
     return { x: rect.x + rect.w + PORT_DX, y: rect.y + rect.h / 2 }
   }
-  const c = choiceRect(rect, choiceIndex)
+  const c = choiceRect(rect, choiceIndex, count)
   return { x: c.x + c.w + PORT_DX, y: c.y + c.h / 2 }
 }
 
@@ -183,11 +213,9 @@ function CardView(props) {
   const type = c.type
   const r = props.rect
   const accent = rec.color || c.color || ''
-  const style = {
-    left: r.x, top: r.y, width: r.w,
-    // 展开的章节卡片要留出「最多 5 行节点 + 滑条」的高度。
-    height: props.expanded ? (type === 'chapter' ? 224 : Math.max(r.h, 168)) : r.h,
-  }
+  // 展开的章节卡片要留出「最多 5 行节点 + 滑条」的高度。
+  const shownH = props.expanded ? (type === 'chapter' ? 224 : Math.max(r.h, 168)) : r.h
+  const style = { left: r.x, top: r.y, width: r.w, height: shownH }
   if (accent) style['--sc-accent'] = accent
   const cls = [
     'sc-card',
@@ -201,6 +229,9 @@ function CardView(props) {
   // 分歧与否也认卡片文件里的 mode：图谱是结构，但 mode 是卡片自己的属性，
   // cards.py 手写的卡片可能还没被图谱记住。
   const isBranchNode = type === 'node' && (rec.mode === 'branch' || c.mode === 'branch')
+  // 正在拉线时：手里这一头是「源」，其它卡片的入口点亮成可落的靶子。
+  const isSource = props.linkFrom != null && props.linkFrom === props.cardKey
+  const isTarget = !!props.linkLive && !isSource
 
   const children = [
     React.createElement('div', { key: 'b', style: { display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 } },
@@ -214,18 +245,22 @@ function CardView(props) {
   if (isBranchNode) {
     // 分歧节点：右侧一列选项，每项自己有出口；最下面永远留一个「＋」，
     // 免得加选项还得先展开卡片或者翻右键菜单。
+    // 列顶按选项本身的高度算（上下居中），＋ 按钮挂在下面、不参与居中。
     const list = rec.choices || []
-    children.push(React.createElement('div', { key: 'ch', className: 'sc-choices' },
+    children.push(React.createElement('div', {
+      key: 'ch', className: 'sc-choices', style: { top: choiceTop({ h: shownH }, list.length) },
+    },
       list.map(function (ch, i) {
         const on = props.hotChoice === ch.id
+        const text = ch.text || '（空选项）'
         return React.createElement('div', {
           key: ch.id, className: 'sc-choice' + (on ? ' on' : '') + (ch.to ? ' linked' : ''),
-          'data-choice': ch.id,
+          'data-choice': ch.id, title: text,
           onPointerDown: function (e) { e.stopPropagation() },
           onDoubleClick: function (e) { e.stopPropagation(); props.onEditChoice(c, ch) },
         },
+          React.createElement('span', { key: 'tx', className: 'sc-choicetext' }, text),
           ch.to ? React.createElement('span', { key: 'go', className: 'sc-choicego' }, '→') : null,
-          React.createElement('span', null, ch.text || '（空选项）'),
           hasOut ? React.createElement('div', {
             className: 'sc-port out' + (on ? ' hot' : ''),
             'data-port': 'out', 'data-choice': ch.id,
@@ -244,11 +279,11 @@ function CardView(props) {
   }
 
   if (hasIn) children.push(React.createElement('div', {
-    key: 'in', className: 'sc-port in', 'data-port': 'in',
-    title: '入口', onPointerUp: function (e) { props.onDropLink(e, c) },
+    key: 'in', className: 'sc-port in' + (isTarget ? ' hot' : ''), 'data-port': 'in',
+    title: isTarget ? '松手连到这张卡' : '入口', onPointerUp: function (e) { props.onDropLink(e, c) },
   }))
   if (hasOut && !isBranchNode) children.push(React.createElement('div', {
-    key: 'out', className: 'sc-port out' + (props.hotPort ? ' hot' : ''), 'data-port': 'out',
+    key: 'out', className: 'sc-port out' + (isSource ? ' hot' : ''), 'data-port': 'out',
     title: '从这里拖到目标卡片',
     onPointerDown: function (e) { e.stopPropagation(); props.onStartLink(e, c, '') },
     onPointerUp: function (e) { props.onDropLink(e, c) },

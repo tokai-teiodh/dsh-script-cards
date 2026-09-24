@@ -85,8 +85,12 @@ function normGraph(raw) {
     for (const e of raw.edges) {
       if (!e || typeof e.from !== 'string' || typeof e.to !== 'string') continue
       if (e.from === e.to) continue
-      if (edges.some(function (x) { return x.from === e.from && x.to === e.to })) continue
-      edges.push({ from: e.from, to: e.to, label: e.label == null ? '' : String(e.label), choice: e.choice == null ? '' : String(e.choice) })
+      const choice = e.choice == null ? '' : String(e.choice)
+      // 去重必须带上 choice：两个不同的选项指向同一张卡是合法的（选项A、选项B 都通向
+      // 「结果」），早先只按 from+to 去重，第二次读盘时那条线就被自己吃掉了 —— 卡片上
+      // 看着「选项B 已经连了」，线上却没有那条线（用户报的连接 bug）。
+      if (edges.some(function (x) { return x.from === e.from && x.to === e.to && x.choice === choice })) continue
+      edges.push({ from: e.from, to: e.to, label: e.label == null ? '' : String(e.label), choice: choice })
     }
   }
   out.nodes = out.nodes

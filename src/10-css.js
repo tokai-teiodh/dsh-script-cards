@@ -64,12 +64,15 @@ const CSS = `
 .sc-narrow .sc-h1{font-size:17px}
 .sc-dockbtn{white-space:nowrap;display:inline-flex;align-items:center;gap:6px}
 
-/* 标签条：不悬停时藏起滚动条，直接拖动即可横向滑（要求 3） */
-.sc-tags{display:flex;flex-wrap:nowrap;gap:4px;overflow-x:auto;overflow-y:hidden}
-.sc-tags::-webkit-scrollbar{height:0}
-.sc-tags:hover::-webkit-scrollbar{height:5px}
+/* 标签条：不悬停时看不见滚动条，但**位置要一直留着**（5px 高度恒定，只把滑块藏起来）。
+   原来是 height:0 → hover 时 height:5px，那是「悬停改变元素高度」：滑块一出现就把标签
+   顶走，指针落回原处又取消悬停，于是来回抖，网格跟着跳 —— 侧栏一抖，对话列跟着换行，
+   看起来就是「主界面的对话框莫名上下跳动」。悬停只该改颜色，不该改尺寸。 */
+.sc-tags{display:flex;flex-wrap:nowrap;gap:4px;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin}
+.sc-tags::-webkit-scrollbar{height:5px}
 .sc-tags::-webkit-scrollbar-track{background:transparent}
-.sc-tags::-webkit-scrollbar-thumb{background:var(--dsw-alias-border-l2);border-radius:3px}
+.sc-tags::-webkit-scrollbar-thumb{background:transparent;border-radius:3px}
+.sc-tags:hover::-webkit-scrollbar-thumb{background:var(--dsw-alias-border-l2)}
 .sc-tags::-webkit-scrollbar-thumb:hover{background:var(--dsw-alias-label-secondary)}
 .sc-tag{flex:0 0 auto;font-size:10.5px;line-height:16px;padding:0 7px;border-radius:999px;color:var(--dsw-alias-brand-primary);background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l2);white-space:nowrap}
 
@@ -96,11 +99,16 @@ const CSS = `
 .sc-stage.blur{filter:blur(3px) saturate(.7);pointer-events:none}
 .sc-dots{position:absolute;left:-4000px;top:-4000px;width:8000px;height:8000px;pointer-events:none;background-image:radial-gradient(var(--dsw-alias-border-l1) 1px,transparent 1px);background-size:22px 22px;opacity:.7}
 .sc-edges{position:absolute;left:-4000px;top:-4000px;overflow:visible;pointer-events:none}
-.sc-edge{fill:none;stroke:var(--dsw-alias-border-l2);stroke-width:1.6}
-.sc-edge.on{stroke:var(--dsw-alias-brand-primary);stroke-width:2.2}
-.sc-edge.temp{stroke:var(--dsw-alias-brand-primary);stroke-dasharray:5 4}
-.sc-edgehit{fill:none;stroke:transparent;stroke-width:16;pointer-events:stroke;cursor:pointer}
-.sc-arrowhead{fill:var(--dsw-alias-border-l2)}
+/* 连线。颜色绝对不能用 --dsw-alias-border-l2：那是「描边级」的颜色，深色主题下算出来
+   是 rgba(255,255,255,.12)，1.5px 的线画在画布上等于没有 —— 用户报的「连线是全透明的」
+   就是这个（浏览器里量出来的 stroke 值就是 12% 白）。改用次要文字色。
+   线宽也统一到 1.5px：普通 / 高亮 / 橡皮筋只差颜色与透明度，不再差粗细；箭头另外用
+   userSpaceOnUse 固定尺寸，不再跟着线宽一起放大。 */
+.sc-edge{fill:none;stroke:var(--dsw-alias-label-secondary);stroke-width:1.5;opacity:.75}
+.sc-edge.on{stroke:var(--dsw-alias-brand-primary);opacity:1}
+.sc-edge.temp{stroke:var(--dsw-alias-brand-primary);stroke-dasharray:5 4;opacity:1}
+.sc-edgehit{fill:none;stroke:transparent;stroke-width:14;pointer-events:stroke;cursor:pointer}
+.sc-arrowhead{fill:var(--dsw-alias-label-secondary)}
 .sc-arrowhead-on{fill:var(--dsw-alias-brand-primary)}
 .sc-scrim{position:absolute;inset:0;background:rgba(0,0,0,.32);opacity:0;transition:opacity .24s ease;pointer-events:none}
 .sc-scrim.on{opacity:1}
@@ -127,24 +135,35 @@ const CSS = `
 .sc-cardsecname{font-size:10px;letter-spacing:.1em;color:var(--dsw-alias-label-secondary);margin-bottom:2px}
 .sc-cardlist{margin:0;padding-left:14px}
 .sc-cardlist li{font-size:11.5px;line-height:1.6}
-/* 接口圆点：整个圆 + 空心（底是卡片自己的底色，只有一圈本色描边），不再被卡片裁成
-   半个。平时就有半透明，悬停 / 选中 / 拉到一半时整亮 —— 否则「哪里能拉线」只能靠猜。 */
-.sc-port{position:absolute;top:50%;margin-top:-7px;width:14px;height:14px;box-sizing:border-box;border-radius:50%;background:var(--dsw-alias-bg-base);border:2px solid var(--sc-accent,var(--dsw-alias-brand-primary));cursor:crosshair;opacity:.45;transition:opacity .12s,transform .12s}
-.sc-port.in{left:-7px}
-.sc-port.out{right:-7px}
+/* 接口圆点：整个圆 + 空心（底是卡片自己的底色，只有一圈本色描边）。
+   16px 是偶数、偏移也是整数，圆心才落在整数像素上：14px 配 -7px 时，凡是行高是奇数
+   或者浮点的地方（选项行原来是 padding 撑出来的 28.67px），圆点就落在半像素上，栅格
+   化出来是一团发虚的椭圆 —— 用户报的「节点并不是正圆」就是这个。
+   悬停 / 选中时整亮；被当目标时整颗填实（原来是 scale(1.3)，缩放一样会让它发虚）。 */
+.sc-port{position:absolute;top:50%;margin-top:-8px;width:16px;height:16px;box-sizing:border-box;padding:0;border-radius:50%;background:var(--dsw-alias-bg-base);border:2px solid var(--sc-accent,var(--dsw-alias-brand-primary));cursor:crosshair;opacity:.65}
+.sc-port.in{left:-8px}
+.sc-port.out{right:-8px}
 .sc-card:hover .sc-port,.sc-card.on .sc-port{opacity:1}
-.sc-port.hot{opacity:1;transform:scale(1.3)}
+.sc-port.hot{opacity:1;background:var(--sc-accent,var(--dsw-alias-brand-primary))}
 .sc-elabel{position:absolute;transform:translate(-50%,-50%);font-size:10.5px;padding:1px 6px;border-radius:999px;background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary);cursor:pointer;white-space:nowrap;max-width:130px;overflow:hidden;text-overflow:ellipsis}
 .sc-elabel.on{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary)}
 .sc-elabel.empty{opacity:.45;font-style:italic}
 
-/* 分歧节点的选项：贴在卡片右侧 */
-.sc-choices{position:absolute;left:100%;top:8px;margin-left:14px;width:170px;display:flex;flex-direction:column;gap:5px;z-index:2}
-.sc-choice{position:relative;border:1px solid var(--dsw-alias-border-l2);border-radius:9px;background:var(--dsw-alias-bg-layer-2);padding:5px 8px;font-size:11.5px;line-height:1.45;cursor:pointer;white-space:normal;word-break:break-word}
+/* 分歧节点的选项：贴在卡片右侧。整列按「选项本身」的高度上下居中，下面的 ＋ 按钮
+   挂在最后一个选项下面、不参与居中（用户的要求：居中的选项不包括 ＋，但 ＋ 照样在）。
+   没有布局引擎可测量，所以列顶由 JS 算出来写成行内 top —— 连线起点用的是同一套几何，
+   两边不会各说各话。
+   ⚠ 这一列（以及里面的选项）都不能写 overflow:hidden：出口圆点有一半在盒子外面，
+   谁裁溢出，圆点就被裁成半个（卡片上刚踩过一模一样的坑）。 */
+.sc-choices{position:absolute;left:100%;margin-left:14px;width:170px;display:flex;flex-direction:column;gap:5px;z-index:2}
+/* 选项行高固定 30px、单行不换行（超长省略号，悬停看 title，展开卡片里读全文）。
+   行高一浮动，后面的行、出口圆点、连线起点就全对不上。 */
+.sc-choice{position:relative;box-sizing:border-box;height:30px;display:flex;align-items:center;gap:5px;border:1px solid var(--dsw-alias-border-l2);border-radius:9px;background:var(--dsw-alias-bg-layer-2);padding:0 8px;font-size:11.5px;line-height:1.45;cursor:pointer}
 .sc-choice:hover{border-color:var(--sc-accent,var(--dsw-alias-brand-primary))}
 .sc-choice.on{border-color:var(--sc-accent,var(--dsw-alias-brand-primary));color:var(--sc-accent,var(--dsw-alias-brand-primary))}
-.sc-choice .sc-port{top:50%;margin-top:-7px;opacity:1}
-.sc-choice .sc-choicego{float:right;margin-left:6px;opacity:.75}
+.sc-choicetext{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.sc-choice .sc-port{top:50%;margin-top:-8px;opacity:1}
+.sc-choice .sc-choicego{flex:none;opacity:.75}
 .sc-choice.linked{border-color:var(--sc-accent,var(--dsw-alias-brand-primary))}
 .sc-choiceadd{border:1px dashed var(--dsw-alias-border-l2);border-radius:9px;background:transparent;color:var(--dsw-alias-label-secondary);font-size:11px;font-family:inherit;padding:4px 8px;cursor:pointer;text-align:left}
 .sc-choiceadd:hover{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary)}
