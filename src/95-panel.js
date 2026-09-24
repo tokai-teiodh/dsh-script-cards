@@ -72,9 +72,13 @@ function CardsPanel(props) {
     try { writeUi(cwd, next) } catch (e) { pushNotice('浏览器存储不可用：' + msgOf(e)) }
   }
 
-  function saveGraph(next) {
+  // keep：刚写进磁盘、但这一帧的 cards 里还没有的卡片键（新建 / 复制 / 粘贴都是这样）。
+  // 不把它们算进来的话，pruneGraph 会把刚加上的节点当孤儿立刻删掉——卡片文件落盘了，
+  // 画布上却什么都没有（用户报的「新建没用」就是这个）。
+  function saveGraph(next, keep) {
     const valid = {}
     for (const c of cards.concat(archives)) valid[cardKey(c)] = true
+    for (const k of keep || []) valid[k] = true
     const pruned = pruneGraph(next, valid)
     setGraph(pruned)
     if (!cwd) return
@@ -244,7 +248,7 @@ function CardsPanel(props) {
         version: 1, chapters: graph.chapters.slice(), nodes: Object.assign({}, graph.nodes), edges: graph.edges.slice(),
       }
       next.nodes[key] = { x: at.x, y: at.y, cx: at.x + 40, cy: at.y + 40, chapter: rec.chapter, mode: entry.mode, color: '', choices: [] }
-      saveGraph(next)
+      saveGraph(next, [key])
       pushNotice({ text: '已复制为 ' + entry.file, kind: 'info' })
     }).catch(function (e) { pushNotice('复制失败：' + msgOf(e)) })
   }
@@ -325,7 +329,7 @@ function CardsPanel(props) {
             version: 1, chapters: graph.chapters.slice(), nodes: Object.assign({}, graph.nodes), edges: graph.edges.slice(),
           }
           next.nodes[key] = { x: Math.round(at.x), y: Math.round(at.y), cx: Math.round(at.x), cy: Math.round(at.y), chapter: rec.chapter, mode: entry.mode, color: '', choices: [] }
-          saveGraph(next)
+          saveGraph(next, [key])
         }).catch(function (e) { pushNotice('粘贴失败：' + msgOf(e)) })
       },
       onRenameEdge: function (e) {
@@ -392,7 +396,7 @@ function CardsPanel(props) {
                 cx: Math.round(dialog.point.x), cy: Math.round(dialog.point.y),
                 chapter: card.type === 'chapter' ? rec.chapter : (fields.chapter || ''),
               })
-              saveGraph(next)
+              saveGraph(next, [key])
             }
             setDialog(null)
             pushNotice({ text: '已新建 ' + entry.file, kind: 'info' })

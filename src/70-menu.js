@@ -60,16 +60,27 @@ function MenuList(props) {
   }))
 }
 
-// 菜单外任意处点击 / Esc 关闭。
+// 菜单背后那层透明遮罩：点它就关菜单。
+//
+// ⚠ 关菜单**必须**靠这层真实的遮罩，不能在 window 上听 mousedown：捕获阶段的
+// mousedown 会在菜单项的 click 之前就把菜单卸载掉，click 于是永远落不到按钮上。
+// 真实浏览器里的表现就是「右键菜单点任何一项都没反应」，而无头测试只直接触发
+// onClick，所以一直没暴露这个顺序问题。
+function MenuBackdrop(props) {
+  return React.createElement('div', {
+    className: 'sc-menuback',
+    onMouseDown: function (e) { e.stopPropagation(); if (props.onClose) props.onClose() },
+    onContextMenu: function (e) { e.preventDefault(); e.stopPropagation(); if (props.onClose) props.onClose() },
+  })
+}
+
+// Esc 关闭（鼠标的关闭交给 MenuBackdrop）。
 function useDismiss(onClose, active) {
   React.useEffect(function () {
     if (!active) return undefined
-    function down() { onClose() }
     function key(e) { if (e.key === 'Escape') { e.stopPropagation(); onClose() } }
-    window.addEventListener('mousedown', down, true)
     window.addEventListener('keydown', key, true)
     return function () {
-      window.removeEventListener('mousedown', down, true)
       window.removeEventListener('keydown', key, true)
     }
   }, [active, onClose])

@@ -695,6 +695,7 @@ function BoardView(props) {
         React.createElement('button', { className: 'sc-btn', onClick: function () { setView({ x: 24, y: 20, s: 1 }) } }, '归位')
       )
     ),
+    menu ? MenuBackdrop({ onClose: function () { setMenu(null) } }) : null,
     menu ? (menu.card
       ? MenuList({
         x: menu.x, y: menu.y, items: menuItems(menu.card),

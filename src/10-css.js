@@ -157,6 +157,7 @@ const CSS = `
 .sc-expandbody{flex:1;min-height:0;overflow:auto;font-size:12.5px;line-height:1.75}
 
 /* 右键菜单 */
+.sc-menuback{position:fixed;inset:0;z-index:99996}
 .sc-menu{position:fixed;z-index:99998;min-width:172px;border-radius:10px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-base);box-shadow:0 12px 34px rgba(0,0,0,.34);padding:5px;font-size:12.5px}
 .sc-menuitem{display:flex;align-items:center;gap:8px;padding:5px 9px;border-radius:7px;cursor:pointer;white-space:nowrap;color:inherit;background:transparent;border:none;font-family:inherit;font-size:12.5px;width:100%;text-align:left}
 .sc-menuitem:hover{background:var(--dsw-alias-bg-layer-2)}

@@ -466,6 +466,7 @@ await tick()
 view.window('pointerup', { clientX: 100, clientY: 100 })
 await tick()
 const writesBefore = writes.length
+const nodesBeforePaste = Object.keys(JSON.parse(files[GRAPH]).nodes).length
 const keyEvent = (key, extra) => Object.assign({ key, target: { tagName: 'DIV' }, preventDefault() {}, stopPropagation() {} }, extra || {})
 view.window('keydown', keyEvent('c', { ctrlKey: true }))
 await tick()
@@ -473,12 +474,54 @@ view.window('keydown', keyEvent('v', { ctrlKey: true }))
 await tick()
 await tick()
 ok(writes.length > writesBefore, 'Ctrl+C then Ctrl+V duplicated a card onto disk', writes.length - writesBefore)
+// 同一处 prune 语义：粘贴出来的副本也必须真的落到画布上（不然就是「卡片有了、画布上没有」）
+eq(Object.keys(JSON.parse(files[GRAPH]).nodes).length, nodesBeforePaste + 1, 'the pasted copy got a canvas node too')
 
 // ── L. orphan pruning ────────────────────────────────────────────────────────
 console.log('\nL. orphan pruning')
 const graphFinal = JSON.parse(files[GRAPH])
 ok(!graphFinal.nodes['card/node-gone.md'], 'a node whose card file vanished was pruned from the graph')
 ok(!graphFinal.edges.some((e) => e.from === 'card/node-gone.md'), 'its edges were pruned too')
+
+// ── M. context-menu actions under the real event order ───────────────────────
+// 真实浏览器里点一项菜单的顺序是 mousedown → mouseup → click。早先关菜单用的是
+// window 上**捕获阶段**的 mousedown，菜单在 click 之前就被卸载了，于是每一项都
+// 没反应（用户报的就是这个：右键 → 新建，什么都不弹）。这一段把那个顺序补上。
+console.log('\nM. context-menu actions under the real event order')
+view.fire(canvas, 'onContextMenu', { clientX: 520, clientY: 420 })
+await tick()
+ok(!!view.findMaybe('sc-menu'), 'right-clicking empty canvas opens the menu')
+ok(!!view.findMaybe('sc-menuback'), 'a dismiss backdrop sits behind the menu')
+const newItem = view.findAll('sc-menuitem').filter((n) => view.textOf(n).indexOf('新建节点') !== -1)[0]
+ok(!!newItem, 'the create-node item is in the menu')
+view.window('mousedown', { target: null })
+await tick()
+ok(!!view.findMaybe('sc-menu'), 'a mousedown does not tear the menu down before the click lands')
+view.click(newItem)
+await tick()
+ok(!!view.findMaybe('sc-modal'), 'choosing 新建节点 actually opens the editor')
+
+const nodesBefore = Object.keys(JSON.parse(files[GRAPH]).nodes)
+view.fire(view.find('sc-inp'), 'onChange', { target: { value: '新建的节点甲' } })
+await tick()
+view.click(view.findAll('sc-btn').filter((n) => view.textOf(n).indexOf('保存（写回') !== -1)[0])
+await tick()
+await tick()
+const newWrite = writes.filter((w) => w.path.indexOf('/卡片/') !== -1 && w.text.indexOf('新建的节点甲') !== -1).pop()
+ok(!!newWrite, 'the new card was really written to disk', writes.map((w) => w.path))
+ok(!!newWrite && newWrite.text.indexOf('type: node') !== -1, 'the new file carries node frontmatter', newWrite && newWrite.text)
+ok(!view.findMaybe('sc-modal'), 'the editor closed after saving')
+const graphAfter = JSON.parse(files[GRAPH])
+const newKeys = Object.keys(graphAfter.nodes).filter((k) => nodesBefore.indexOf(k) === -1)
+eq(newKeys.length, 1, 'the new card got exactly one canvas node')
+ok(!!graphAfter.nodes[newKeys[0]].chapter, 'the new node is attached to the current chapter', graphAfter.nodes[newKeys[0]])
+
+view.fire(canvas, 'onContextMenu', { clientX: 300, clientY: 250 })
+await tick()
+ok(!!view.findMaybe('sc-menu'), 'the menu reopens for the backdrop check')
+view.fire(view.find('sc-menuback'), 'onMouseDown', {})
+await tick()
+ok(!view.findMaybe('sc-menu'), 'pressing the backdrop dismisses the menu')
 
 console.log('\n' + (failures === 0 ? 'ALL GREEN' : 'FAILURES: ' + failures) + '  (' + checks + ' checks, ' + view.renderCount() + ' renders)')
 if (failures !== 0) process.exit(1)
