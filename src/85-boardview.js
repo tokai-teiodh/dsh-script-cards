@@ -26,7 +26,7 @@ function BoardView(props) {
   const [hi, setHi] = React.useState(0)
   const here = hist[hi] || { level: 'root' }
 
-  const [view, setView] = React.useState({ x: 24, y: 20, s: props.ui && props.ui.zoom ? props.ui.zoom : 1 })
+  const [view, setView] = React.useState({ x: 24, y: 20, s: snapZoom(props.ui && props.ui.zoom ? props.ui.zoom : 1) })
   const [sel, setSel] = React.useState(null)
   const [link, setLink] = React.useState(null)
   const [menu, setMenu] = React.useState(null)
@@ -123,6 +123,9 @@ function BoardView(props) {
       version: 1, chapters: graph.chapters.slice(), nodes: Object.assign({}, graph.nodes),
       edges: graph.edges.concat([{ from: from, to: to, label: '', choice: choice || '' }]),
     }
+    // 从某个选项的出口拉出去的连线，同时把「这一项通向哪」记进选项本身。
+    // 不记的话，展开面板里永远显示「还没连到节点」，选项与节点就断成两截。
+    if (choice) next.nodes[from] = bindChoice(next.nodes[from], choice, to)
     props.onGraph(next)
   }
 
@@ -133,7 +136,26 @@ function BoardView(props) {
         return !(e.from === from && e.to === to && String(e.choice || '') === String(choice || ''))
       }),
     }
+    if (choice) next.nodes[from] = bindChoice(next.nodes[from], choice, '')
     props.onGraph(next)
+  }
+
+  /** 把某条连线的去向写进它对应的那个选项（to 为空 = 断开）。 */
+  function bindChoice(rec, choiceId, to) {
+    const old = rec || { x: null, y: null, cx: null, cy: null, chapter: '', mode: '', color: '', choices: [] }
+    const choices = (old.choices || []).map(function (ch) {
+      return ch.id === choiceId ? Object.assign({}, ch, { to: to || '' }) : ch
+    })
+    return Object.assign({}, old, { choices: choices })
+  }
+
+  function addChoice(card) {
+    const k = cardKey(card)
+    const rec = nodeRec(graph, k)
+    const list = (rec.choices || []).slice()
+    const letter = String.fromCharCode(65 + list.length)
+    list.push({ id: uid('o'), text: '选项' + letter, to: '' })
+    patchRec(k, { mode: 'branch', choices: list })
   }
 
   // ── 展开 / 收起 ────────────────────────────────────────────────────────────
@@ -171,13 +193,17 @@ function BoardView(props) {
     setSel(k)
     if (!r.placed) return
     const start = toCanvas(e.clientX, e.clientY)
-    dragRef.current = { key: k, dx: start.x - r.x, dy: start.y - r.y, moved: false }
+    dragRef.current = { key: k, dx: start.x - r.x, dy: start.y - r.y, x: r.x, y: r.y, moved: false }
     setDrag({ key: k, x: r.x, y: r.y })
     if (e.currentTarget && typeof e.currentTarget.setPointerCapture === 'function' && e.pointerId !== undefined) {
       try { e.currentTarget.setPointerCapture(e.pointerId) } catch (err) { /* 忽略 */ }
     }
   }
 
+  // 拖动的位置只认 ref，不认 state。
+  // 真实浏览器里 pointermove 之后 React 还没重渲染（setState 要等一个宏任务），
+  // 而 pointerup 是紧接着派发的 —— 此时闭包里的 `drag` 还是松手前那一帧的值，
+  // 于是卡片被写回原位，看起来就是「拖了没写」。ref 永远是刚算出来的那个坐标。
   function movePointers(e) {
     if (dragRef.current) {
       const d = dragRef.current
@@ -185,6 +211,8 @@ function BoardView(props) {
       const x = Math.round(p.x - d.dx)
       const y = Math.round(p.y - d.dy)
       d.moved = true
+      d.x = x
+      d.y = y
       setDrag({ key: d.key, x: x, y: y })
       return
     }
@@ -207,7 +235,7 @@ function BoardView(props) {
     if (dragRef.current) {
       const d = dragRef.current
       dragRef.current = null
-      if (d.moved && drag) placeAt(d.key, drag.x, drag.y)
+      if (d.moved) placeAt(d.key, d.x, d.y)
       setDrag(null)
       return
     }
@@ -271,15 +299,16 @@ function BoardView(props) {
   function onWheel(e) {
     if (e.ctrlKey || e.metaKey) {
       const box = canvasBox()
-      const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12
-      const s2 = clamp(view.s * factor, 0.25, 2.2)
+      const s2 = zoomStep(view.s, e.deltaY < 0 ? 1 : -1)
       const px = e.clientX - box.left
       const py = e.clientY - box.top
       const x2 = px - ((px - view.x) / view.s) * s2
       const y2 = py - ((py - view.y) / view.s) * s2
       setView({ x: x2, y: y2, s: s2 })
     } else {
-      setView({ x: view.x - e.deltaX, y: view.y - e.deltaY, s: view.s })
+      // deltaX/deltaY 偶尔缺失（合成事件、老浏览器），缺了就当 0 —— 否则 view 里
+      // 会混进 NaN，整块画布跟着一起废掉。
+      setView({ x: view.x - (Number(e.deltaX) || 0), y: view.y - (Number(e.deltaY) || 0), s: view.s })
     }
     e.preventDefault()
   }
@@ -399,8 +428,8 @@ function BoardView(props) {
     props.onPasteCopy(card, point)
   }
 
-  function newCard(type, point) {
-    props.onNewCard(type, point, level === 'chapter' ? here.key : '')
+  function newCard(type, point, mode) {
+    props.onNewCard(type, point, level === 'chapter' ? here.key : '', mode || '')
   }
 
   function menuItems(card) {
@@ -422,8 +451,9 @@ function BoardView(props) {
       items.push({ key: 'sw', label: '改为' + typeLabel(other) + '卡片', onPick: function () { props.onRetype(card, other) } })
     }
     if (card.type === 'node') {
-      items.push({ key: 'br', label: rec.mode === 'branch' ? '改回普通节点' : '改为分歧节点', onPick: function () { patchRec(k, { mode: rec.mode === 'branch' ? '' : 'branch', choices: rec.choices && rec.choices.length ? rec.choices : [{ id: uid('o'), text: '选项A', to: '' }] }) } })
-      if (rec.mode === 'branch') {
+      const isBranch = rec.mode === 'branch' || card.mode === 'branch'
+      items.push({ key: 'br', label: isBranch ? '改回普通节点' : '改为分歧节点', onPick: function () { patchRec(k, { mode: isBranch ? '' : 'branch', choices: rec.choices && rec.choices.length ? rec.choices : [{ id: uid('o'), text: '选项A', to: '' }] }) } })
+      if (isBranch) {
         items.push({ key: 'chs', label: '编辑选项列表…', onPick: function () { props.onEditChoices(card) } })
       }
     }
@@ -440,6 +470,12 @@ function BoardView(props) {
       items.push({
         key: 'new-' + t, label: '新建' + typeLabel(t) + (fav === t ? '　★常用' : ''),
         onPick: function () { newCard(t, menuPoint.current) },
+      })
+    }
+    if (level !== 'root') {
+      items.push({
+        key: 'new-node-branch', label: '新建分歧节点',
+        onPick: function () { newCard('node', menuPoint.current, 'branch') },
       })
     }
     items.push({ sep: true })
@@ -480,9 +516,12 @@ function BoardView(props) {
 
   // ── 渲染 ───────────────────────────────────────────────────────────────────
   const stageStyle = {
-    transform: 'translate(' + view.x + 'px,' + view.y + 'px) scale(' + view.s + ')',
+    // 取整：层原点落在整数像素上，文字才是像素对齐的（小数偏移会让整块画布发虚）。
+    transform: 'translate(' + Math.round(view.x) + 'px,' + Math.round(view.y) + 'px) scale(' + view.s + ')',
   }
-  if (drag) stageStyle.transition = 'none'
+  // 只有「展开时把卡片飞到中央」需要过渡。平移/缩放要是也套 .28s 过渡，既跟不上手，
+  // 又让浏览器一直拿旧位图做动画 —— 那是画布糊掉的另一半原因。
+  if (!expand || drag) stageStyle.transition = 'none'
 
   const edgeEls = []
   for (const e of edges) {
@@ -500,7 +539,7 @@ function BoardView(props) {
     const on = sel === e.from || sel === e.to
     const d = edgePath(pa, pb)
     edgeEls.push(React.createElement('g', { key: e.from + '->' + e.to + ':' + (e.choice || '') },
-      React.createElement('path', { className: 'sc-edgehit', d: d, onContextMenu: function (ev) { ev.preventDefault(); ev.stopPropagation(); removeEdge(e.from, e.to, e.choice) }, title: '右键删除这条连线' }),
+      React.createElement('path', { className: 'sc-edgehit', d: d, 'data-edge': e.from + '->' + e.to, onContextMenu: function (ev) { ev.preventDefault(); ev.stopPropagation(); removeEdge(e.from, e.to, e.choice) }, title: '右键删除这条连线' }),
       React.createElement('path', { className: 'sc-edge' + (on ? ' on' : ''), d: d, markerEnd: 'url(#sc-arrow' + (on ? '-on' : '') + ')' })
     ))
     const mid = edgeMid(pa, pb)
@@ -536,6 +575,7 @@ function BoardView(props) {
       onMenu: onCardMenu,
       onStartLink: startLink,
       onDropLink: dropLink,
+      onAddChoice: addChoice,
       onEditChoice: function (card, ch) { props.onEditChoice(card, ch) },
     })
   })
@@ -575,7 +615,7 @@ function BoardView(props) {
       ),
       React.createElement('div', { className: 'sc-expandbody' },
         React.createElement('div', { className: 'sc-meta' },
-          c.when ? React.createElement('span', null, '时间：' + c.when) : null,
+          c.when && c.type !== 'chapter' ? React.createElement('span', null, '时间：' + c.when) : null,
           React.createElement('span', null, '文件：' + c.file)
         ),
         TagRow({ tags: c.tags }),
@@ -615,7 +655,7 @@ function BoardView(props) {
         React.createElement('div', { className: 'sc-h2' }, '原文'),
         React.createElement('div', null, markdown(c.body || '', 'raw')),
         React.createElement('div', { className: 'sc-gap' }),
-        c.type === 'node' && rec.mode === 'branch' ? (function () {
+        c.type === 'node' && (rec.mode === 'branch' || c.mode === 'branch') ? (function () {
           // 分歧节点展开后，选项在下面单列一块，带一个加选项的快捷入口。
           const choices = rec.choices || []
           return React.createElement('div', null,
@@ -690,8 +730,8 @@ function BoardView(props) {
         onClick: autoArrange,
       }, '自动排列'),
       React.createElement('div', { className: 'sc-zoombar' },
-        React.createElement('button', { className: 'sc-navbtn', title: '缩小', onClick: function () { setView({ x: view.x, y: view.y, s: clamp(view.s / 1.15, 0.25, 2.2) }) } }, '－'),
-        React.createElement('button', { className: 'sc-navbtn', title: '放大', onClick: function () { setView({ x: view.x, y: view.y, s: clamp(view.s * 1.15, 0.25, 2.2) }) } }, '＋'),
+        React.createElement('button', { className: 'sc-navbtn', title: '缩小', onClick: function () { setView({ x: view.x, y: view.y, s: zoomStep(view.s, -1) }) } }, '－'),
+        React.createElement('button', { className: 'sc-navbtn', title: '放大', onClick: function () { setView({ x: view.x, y: view.y, s: zoomStep(view.s, 1) }) } }, '＋'),
         React.createElement('button', { className: 'sc-btn', onClick: function () { setView({ x: 24, y: 20, s: 1 }) } }, '归位')
       )
     ),

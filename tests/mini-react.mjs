@@ -26,12 +26,18 @@ export function createHarness() {
   let current = null
   let rendering = false
   let dirty = false
+  // 真实 React 里 setState 不会当场重渲染：它排一个宏任务，等当前事件处理完再画。
+  // 于是「同一个手势里的后续事件」读到的还是上一帧的 state。defer(true) 把这一点
+  // 模拟出来，专门用来抓「在原生监听器里读 state」这类 bug。
+  let defer = false
   let rootEl = null
   let tree = null
   let renderCount = 0
   const instances = new Map()
+  const visited = new Set()
   const effectQueue = []
   const listeners = new Map()
+  const created = []
   let storage = {}
 
   // ── React surface ────────────────────────────────────────────────────────
@@ -95,12 +101,31 @@ export function createHarness() {
   }
 
   function getInstance(path, type) {
+    visited.add(path)
     let inst = instances.get(path)
     if (!inst || inst.type !== type) {
       inst = { type: type, hooks: [], idx: 0, path: path }
       instances.set(path, inst)
     }
     return inst
+  }
+
+  // 上一次渲染里在、这一次不在的组件 = 被卸载了。React 会连它的 state 一起丢掉，
+  // 这里也得丢：不然「关掉对话框再打开」会带着上一次敲进去的内容（曾经因此漏掉
+  // 「新建分歧节点应当预置形态」这种断言）。顺带把它的 effect 清理掉，免得
+  // 卸载的组件还在 window 上挂着监听器。
+  function pruneUnmounted() {
+    for (const key of Array.from(instances.keys())) {
+      if (visited.has(key)) continue
+      const inst = instances.get(key)
+      instances.delete(key)
+      for (const slot of inst.hooks) {
+        if (slot && typeof slot.cleanup === 'function') {
+          try { slot.cleanup() } catch (e) { /* ignore */ }
+          slot.cleanup = undefined
+        }
+      }
+    }
   }
 
   function walk(el, path, canvasRect) {
@@ -198,7 +223,9 @@ export function createHarness() {
       do {
         dirty = false
         effectQueue.length = 0
+        visited.clear()
         tree = walk(rootEl, 'root', null)
+        pruneUnmounted()
         renderCount++
         runEffects()
       } while (dirty && ++guard < 60)
@@ -210,19 +237,23 @@ export function createHarness() {
   function renderSoon() {
     dirty = true
     if (rendering) return
+    if (defer) return
     renderNow()
   }
 
   // ── globals the client half expects ──────────────────────────────────────
   function installGlobals(initialStorage) {
     storage = initialStorage ? initialStorage : {}
+    created.length = 0
     const doc = {
       createElement: function () {
-        return {
+        const el = {
           setAttribute: function () {},
           remove: function () {},
           textContent: '',
         }
+        created.push(el)
+        return el
       },
       head: { appendChild: function () {} },
     }
@@ -329,6 +360,8 @@ export function createHarness() {
       fire: fire,
       window: dispatchWindow,
       renderCount: function () { return renderCount },
+      defer: function (on) { defer = !!on },
+      flush: function () { if (dirty) renderNow() },
     }
   }
 
@@ -338,5 +371,6 @@ export function createHarness() {
     installGlobals: installGlobals,
     mount: mount,
     storage: function () { return storage },
+    created: function () { return created },
   }
 }

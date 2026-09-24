@@ -40,6 +40,25 @@ function clamp(v, lo, hi) {
   return n < lo ? lo : (n > hi ? hi : n)
 }
 
+// 画面缩放只走这几档（跟浏览器缩放菜单一个思路）。自由缩放会把整块画布按一个
+// 奇怪的比例重新栅格化，越缩越糊；整数/常见档位至少是清楚的。
+const ZOOM_STEPS = [0.25, 0.33, 0.5, 0.67, 0.8, 1, 1.25, 1.5, 2]
+
+function snapZoom(v) {
+  const n = Number(v)
+  if (!isFinite(n) || n <= 0) return 1
+  let best = ZOOM_STEPS[0]
+  for (const s of ZOOM_STEPS) if (Math.abs(s - n) < Math.abs(best - n)) best = s
+  return best
+}
+
+/** 沿缩放档位走一格（dir > 0 放大）。 */
+function zoomStep(v, dir) {
+  let i = ZOOM_STEPS.indexOf(snapZoom(v))
+  if (i === -1) i = ZOOM_STEPS.indexOf(1)
+  return ZOOM_STEPS[clamp(i + (dir > 0 ? 1 : -1), 0, ZOOM_STEPS.length - 1)]
+}
+
 function slug(text, maxlen) {
   const t = String(text == null ? '' : text).trim().replace(/[\\/:*?"<>|\s]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '')
   return t.slice(0, maxlen || 40) || 'untitled'

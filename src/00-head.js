@@ -6,7 +6,7 @@ const React = require('react')
 
 const TAB_ID = 'dsh-script-cards/panel'
 const TAB_KIND = 'script-cards'
-const VERSION = 'v0.1.0-alpha.2'
+const VERSION = 'v0.1.0-alpha.3'
 
 const LS_KEY = 'dsh-script-cards:state'
 const FAV_KEY = 'dsh-script-cards:fav'

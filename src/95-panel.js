@@ -229,8 +229,8 @@ function CardsPanel(props) {
     }).catch(function (e) { pushNotice('改写失败：' + msgOf(e)) })
   }
 
-  function newCardAt(type, point, chapterKey) {
-    const draft = { id: '', file: '(新卡片)', kind: 'card', type: type, title: '', code: '', when: '', order: null, summary: '', tags: [], body: '', chapter: chapterKey || '', mode: '' }
+  function newCardAt(type, point, chapterKey, mode) {
+    const draft = { id: '', file: '(新卡片)', kind: 'card', type: type, title: '', code: '', when: '', order: null, summary: '', tags: [], body: '', chapter: chapterKey || '', mode: mode || '' }
     setDialog({ kind: 'edit', card: draft, isNew: true, point: point })
   }
 
@@ -395,6 +395,9 @@ function CardsPanel(props) {
                 x: Math.round(dialog.point.x), y: Math.round(dialog.point.y),
                 cx: Math.round(dialog.point.x), cy: Math.round(dialog.point.y),
                 chapter: card.type === 'chapter' ? rec.chapter : (fields.chapter || ''),
+                // 节点形态也要落进图谱：画布靠 rec.mode 决定要不要画选项列，
+                // 漏掉这一行的话，新建出来的分歧节点在画布上只是个普通节点。
+                mode: card.type === 'node' ? (fields.mode || '') : rec.mode,
               })
               saveGraph(next, [key])
             }

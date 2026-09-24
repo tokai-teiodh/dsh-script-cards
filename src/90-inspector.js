@@ -43,7 +43,8 @@ function CardEditor(props) {
     props.onSave(card, {
       title: title.trim(),
       code: code.trim(),
-      when: when.trim(),
+      // 章节卡片不谈「故事内时间」——章节是容器，时间是章节里那些节点的事。
+      when: card.type === 'chapter' ? '' : when.trim(),
       order: order.trim() === '' ? '' : String(Number(order.trim())),
       summary: summary.trim(),
       tags: tags.split(/[,，;；]/).map(function (t) { return t.trim() }).filter(Boolean),
@@ -73,7 +74,9 @@ function CardEditor(props) {
         Field({ key: 't', label: card.type === 'chapter' ? '章节名' : '标题', children: React.createElement('input', { className: 'sc-inp wide', value: title, onChange: function (e) { setTitle(e.target.value) } }) })
       ),
       React.createElement('div', { key: 'r2', className: 'sc-frow' },
-        Field({ key: 'w', label: '时间', children: React.createElement('input', { className: 'sc-inp', value: when, placeholder: '例如 2025/4/24 傍晚', onChange: function (e) { setWhen(e.target.value) } }) }),
+        card.type === 'chapter'
+          ? null
+          : Field({ key: 'w', label: '时间', children: React.createElement('input', { className: 'sc-inp', value: when, placeholder: '例如 2025/4/24 傍晚', onChange: function (e) { setWhen(e.target.value) } }) }),
         Field({ key: 'o', label: '序号', children: React.createElement('input', { className: 'sc-inp num', value: order, onChange: function (e) { setOrder(e.target.value) } }) }),
         isBranch && card.type !== 'chapter'
           ? Field({ key: 'c', label: '所属章节', children: React.createElement('select', { className: 'sc-inp wide', value: chapter, onChange: function (e) { setChapter(e.target.value) } },

@@ -198,7 +198,9 @@ function CardView(props) {
 
   const hasOut = canOut(type)
   const hasIn = canIn(type)
-  const isBranchNode = type === 'node' && rec.mode === 'branch'
+  // 分歧与否也认卡片文件里的 mode：图谱是结构，但 mode 是卡片自己的属性，
+  // cards.py 手写的卡片可能还没被图谱记住。
+  const isBranchNode = type === 'node' && (rec.mode === 'branch' || c.mode === 'branch')
 
   const children = [
     React.createElement('div', { key: 'b', style: { display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 } },
@@ -209,15 +211,20 @@ function CardView(props) {
     ),
   ]
 
-  if (isBranchNode && (rec.choices || []).length) {
+  if (isBranchNode) {
+    // 分歧节点：右侧一列选项，每项自己有出口；最下面永远留一个「＋」，
+    // 免得加选项还得先展开卡片或者翻右键菜单。
+    const list = rec.choices || []
     children.push(React.createElement('div', { key: 'ch', className: 'sc-choices' },
-      rec.choices.map(function (ch, i) {
+      list.map(function (ch, i) {
         const on = props.hotChoice === ch.id
         return React.createElement('div', {
-          key: ch.id, className: 'sc-choice' + (on ? ' on' : ''),
+          key: ch.id, className: 'sc-choice' + (on ? ' on' : '') + (ch.to ? ' linked' : ''),
+          'data-choice': ch.id,
           onPointerDown: function (e) { e.stopPropagation() },
           onDoubleClick: function (e) { e.stopPropagation(); props.onEditChoice(c, ch) },
         },
+          ch.to ? React.createElement('span', { key: 'go', className: 'sc-choicego' }, '→') : null,
           React.createElement('span', null, ch.text || '（空选项）'),
           hasOut ? React.createElement('div', {
             className: 'sc-port out' + (on ? ' hot' : ''),
@@ -226,7 +233,13 @@ function CardView(props) {
             title: '从这里拖到目标卡片',
           }) : null
         )
-      })
+      }),
+      React.createElement('button', {
+        key: 'add', className: 'sc-choiceadd',
+        onPointerDown: function (e) { e.stopPropagation() },
+        onClick: function (e) { e.stopPropagation(); props.onAddChoice(c) },
+        title: '加一个选项',
+      }, '＋ 选项')
     ))
   }
 
@@ -271,7 +284,8 @@ function Dock(props) {
             onClick: function () { props.onDockTap(c) },
           },
             React.createElement('div', { className: 'sc-dockcardtitle' }, cardDisplay(c) || c.file),
-            React.createElement('div', { className: 'sc-dockcardwhen' }, c.when || typeLabel(c.type))
+            React.createElement('div', { className: 'sc-dockcardwhen' },
+              c.type === 'chapter' ? typeLabel(c.type) : (c.when || typeLabel(c.type)))
           )
         })
       )

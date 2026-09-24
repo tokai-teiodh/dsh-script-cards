@@ -87,7 +87,10 @@ const CSS = `
 .sc-crumbsep{flex:none;color:var(--dsw-alias-label-secondary);opacity:.5;font-size:11px}
 .sc-boardtip{font-size:10.5px;color:var(--dsw-alias-label-secondary);flex:none;font-family:ui-monospace,Menlo,Consolas,monospace;opacity:.85}
 .sc-canvas{flex:1;min-height:0;position:relative;overflow:hidden;background:var(--dsw-alias-bg-layer-1);user-select:none;touch-action:none}
-.sc-stage{position:absolute;left:0;top:0;transform-origin:0 0;transition:transform .28s cubic-bezier(.22,.61,.36,1);will-change:transform}
+/* 不要给画布加 will-change:transform：那会把这层（里面有 8000×8000 的点阵与 SVG）
+   钉成一个合成层，缩放/平移时浏览器会拿旧位图拉伸，整块画布就糊了。加了它以后
+   文字要清晰只能靠运气。 */
+.sc-stage{position:absolute;left:0;top:0;transform-origin:0 0;transition:transform .28s cubic-bezier(.22,.61,.36,1)}
 .sc-stage.notrans{transition:none}
 .sc-stage.blur{filter:blur(3px) saturate(.7);pointer-events:none}
 .sc-dots{position:absolute;left:-4000px;top:-4000px;width:8000px;height:8000px;pointer-events:none;background-image:radial-gradient(var(--dsw-alias-border-l1) 1px,transparent 1px);background-size:22px 22px;opacity:.7}
@@ -135,6 +138,8 @@ const CSS = `
 .sc-choice:hover{border-color:var(--sc-accent,var(--dsw-alias-brand-primary))}
 .sc-choice.on{border-color:var(--sc-accent,var(--dsw-alias-brand-primary));color:var(--sc-accent,var(--dsw-alias-brand-primary))}
 .sc-choice .sc-port{top:50%;margin-top:-8px;opacity:1}
+.sc-choice .sc-choicego{float:right;margin-left:6px;opacity:.75}
+.sc-choice.linked{border-color:var(--sc-accent,var(--dsw-alias-brand-primary))}
 .sc-choiceadd{border:1px dashed var(--dsw-alias-border-l2);border-radius:9px;background:transparent;color:var(--dsw-alias-label-secondary);font-size:11px;font-family:inherit;padding:4px 8px;cursor:pointer;text-align:left}
 .sc-choiceadd:hover{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary)}
 

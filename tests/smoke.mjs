@@ -66,7 +66,7 @@ function makeFiles() {
   const card = (file, meta, body) => { f[CARDS_DIR + '/' + file] = md(meta, body) }
   // branch family: canvas only
   card('chapter-g1.md', { id: 'chapter-g1', type: 'chapter', title: '章节甲', code: 'G1.1', summary: '第一章的简介', tags: '共通, 主线', updated: '2026-01-02' })
-  card('chapter-g2.md', { id: 'chapter-g2', type: 'chapter', title: '章节乙', code: 'G1.2', summary: '第二章的简介', tags: '共通' })
+  card('chapter-g2.md', { id: 'chapter-g2', type: 'chapter', title: '章节乙', code: 'G1.2', when: '第99天', summary: '第二章的简介', tags: '共通' })
   card('node-n1.md', { id: 'node-n1', type: 'node', title: '节点一', when: '第4天', order: '10', summary: '节点的简介', tags: '日常' },
     '## 角色\n- 甲\n- 乙\n\n## 场景\n- 某地\n\n## 内容\n- 发生了某件事\n')
   card('node-n2.md', { id: 'node-n2', type: 'node', title: '节点二', when: '第2天', order: '20', summary: '另一个节点' })
@@ -299,6 +299,7 @@ const toPort = view.findAll('sc-port').filter((n) => n.props['data-port'] === 'i
 view.fire(toPort, 'onPointerUp', { clientX: 210, clientY: 210 })
 await tick()
 ok(JSON.parse(files[GRAPH]).edges.some((e) => e.choice === 'o1'), 'the edge dragged from a choice was written to the graph file')
+eq(JSON.parse(files[GRAPH]).nodes[N3].choices[0].to, N1, 'the choice remembers which node it leads to')
 
 // ── F. dragging a card persists its position ─────────────────────────────────
 console.log('\nF. dragging a card')
@@ -357,7 +358,7 @@ const ov2 = view.findMaybe('sc-expand')
 ok(!!ov2, 'the branch node expanded')
 has(view.textOf(ov2), '选项 (1)', 'expanded branch node lists its choices below')
 has(view.textOf(ov2), '选项甲', 'the choice text is shown')
-has(view.textOf(ov2), '还没连到节点', 'an unconnected choice says so')
+has(view.textOf(ov2), '→ 节点一', 'the choice names where it goes (it was linked in E)')
 ok(view.findAll('sc-btn').filter((n) => view.textOf(n).indexOf('添加 / 编辑选项') !== -1).length === 1, 'there is a one-click add/edit entry')
 view.click(view.find('sc-expandx'))
 await tick()
@@ -454,9 +455,10 @@ const after = view.find('sc-boardtip').props.children
 ok(String(after) !== String(before), 'Ctrl+wheel changed the zoom', [before, after])
 ok(parseInt(String(after), 10) > parseInt(String(before), 10), 'scrolling up zooms in', [before, after])
 has(view.find('sc-stage').props.style.transform, 'scale(', 'the canvas scales through a transform (relative positions hold)')
-view.fire(canvas, 'onWheel', { deltaY: 100, clientX: 400, clientY: 300 })
+view.fire(canvas, 'onWheel', { deltaX: 0, deltaY: 100, clientX: 400, clientY: 300 })
 await tick()
 ok(!!view.find('sc-stage'), 'plain wheel panning does not throw')
+ok(!/NaN/.test(String(view.find('sc-stage').props.style.transform)), 'panning keeps the transform numeric')
 
 // ── K. keyboard shortcuts ────────────────────────────────────────────────────
 console.log('\nK. keyboard shortcuts')
@@ -522,6 +524,144 @@ ok(!!view.findMaybe('sc-menu'), 'the menu reopens for the backdrop check')
 view.fire(view.find('sc-menuback'), 'onMouseDown', {})
 await tick()
 ok(!view.findMaybe('sc-menu'), 'pressing the backdrop dismisses the menu')
+
+// ── N. a drag must survive React not having re-rendered yet ──────────────────
+// 真实浏览器里 pointermove 之后 React 还没重渲染（setState 要排一个宏任务），紧跟着
+// 派发的 pointerup 读到的还是上一帧的 state。要是把「拖到哪了」存在 state 里，松手时
+// 拿到的就是原位/空值，卡片被写回原地 —— 用户报的「画布的拖动没有写」。
+// 这一段用 defer 把这个时间差造出来：pointermove 与 pointerup 之间不许有渲染。
+console.log('\nN. dragging: pointerup sees the live position, not a stale render')
+const dragCardN = view.findAll('sc-card').filter((n) => n.props['data-key'] === N2)[0]
+const cxBefore = JSON.parse(files[GRAPH]).nodes[N2].cx
+view.defer(true)
+view.fire(dragCardN, 'onPointerDown', { button: 0, clientX: 100, clientY: 100 })
+view.window('pointermove', { clientX: 300, clientY: 260 })
+view.window('pointerup', { clientX: 300, clientY: 260 })
+view.defer(false)
+view.flush()
+await tick()
+const cxAfter = JSON.parse(files[GRAPH]).nodes[N2].cx
+ok(cxAfter !== cxBefore && cxAfter - cxBefore > 60, 'the card landed where it was dropped (200px right)', [cxBefore, cxAfter])
+ok(!view.findAll('sc-card').some((n) => n.props['data-key'] === N2 && n.props.style.left !== cxAfter),
+  'the card is drawn at the position that was written')
+
+// ── O. branch node: choices are bound to nodes ───────────────────────────────
+console.log('\nO. branch node: a choice knows where it goes')
+const n3CardO = view.findAll('sc-card').filter((n) => n.props['data-key'] === N3)[0]
+ok(!!n3CardO, 'the branch node is still on the canvas')
+const oChoice = view.findAll('sc-choice').filter((n) => n.props['data-choice'] === 'o1')[0]
+ok(!!oChoice, 'the choice is rendered')
+ok(!!view.findMaybe('sc-choiceadd'), 'the card offers a ＋ option button without opening a dialog')
+ok(String(oChoice.props.className).indexOf('linked') !== -1, 'a connected choice is marked as linked')
+ok(!!view.findMaybe('sc-choicego'), 'the linked choice shows where it goes')
+
+view.fire(n3CardO, 'onDoubleClick', {})
+await wait(60)
+const ov3 = view.findMaybe('sc-expand')
+has(view.textOf(ov3), '→ 节点一', 'the expanded node names the target instead of saying it is unconnected')
+ok(view.textOf(ov3).indexOf('还没连到节点') === -1, 'nothing claims to be unconnected any more')
+view.click(view.find('sc-expandx'))
+await tick()
+
+const choicesBefore = JSON.parse(files[GRAPH]).nodes[N3].choices.length
+view.click(view.find('sc-choiceadd'))
+await tick()
+await tick()
+const gAdd = JSON.parse(files[GRAPH])
+eq(gAdd.nodes[N3].choices.length, choicesBefore + 1, 'the ＋ button appended a choice')
+eq(view.findAll('sc-choice').length, choicesBefore + 1, 'and the new choice is on the card')
+eq(gAdd.nodes[N3].choices[1].to, '', 'the fresh choice starts unconnected')
+
+const choiceEdge = view.findAll('sc-edgehit').filter((n) => n.props['data-edge'] === N3 + '->' + N1)[0]
+ok(!!choiceEdge, 'the choice edge is on the canvas')
+view.fire(choiceEdge, 'onContextMenu', {})
+await tick()
+const gDel = JSON.parse(files[GRAPH])
+ok(!gDel.edges.some((e) => e.from === N3 && e.to === N1), 'right-clicking a line deletes it')
+eq(gDel.nodes[N3].choices[0].to, '', 'deleting the line also unlinks the choice')
+
+// ── O2. creating a branch node straight from the menu ────────────────────────
+// 「分歧节点」以前只能先建普通节点再右键改形态，而且新建时 mode 没写进图谱 ——
+// 文件里是分歧、画布上却没有选项列。这一段把整条路走一遍。
+console.log('\nO2. create a branch node directly')
+view.fire(canvas, 'onContextMenu', { clientX: 520, clientY: 430 })
+await tick()
+const branchItem = view.findAll('sc-menuitem').filter((n) => view.textOf(n).indexOf('新建分歧节点') !== -1)[0]
+ok(!!branchItem, 'the empty-canvas menu offers 新建分歧节点')
+view.click(branchItem)
+await tick()
+ok(!!view.findMaybe('sc-modal'), 'the editor opened for it')
+const modeSel = view.findAll('sc-inp').filter((n) => n.tag === 'select')
+  .filter((n) => (Array.isArray(n.props.children) ? n.props.children : []).some((o) => o && o.props && o.props.value === 'branch'))[0]
+ok(!!modeSel, 'the editor has a node-shape selector')
+eq(modeSel.props.value, 'branch', 'the editor is already set to 分歧')
+const keysBefore = Object.keys(JSON.parse(files[GRAPH]).nodes)
+view.fire(view.find('sc-inp'), 'onChange', { target: { value: '分歧节点甲' } })
+await tick()
+view.click(view.findAll('sc-btn').filter((n) => view.textOf(n).indexOf('保存（写回') !== -1)[0])
+await tick()
+await tick()
+const gNew = JSON.parse(files[GRAPH])
+const added = Object.keys(gNew.nodes).filter((k) => keysBefore.indexOf(k) === -1)
+eq(added.length, 1, 'the branch node got one canvas node')
+eq(gNew.nodes[added[0]].mode, 'branch', 'the graph records its mode, not just the file')
+const addedWrite = writes.filter((w) => w.path.indexOf('.md') !== -1 && w.text.indexOf('分歧节点甲') !== -1).pop()
+ok(!!addedWrite && addedWrite.text.indexOf('mode: branch') !== -1, 'the card file says mode: branch', addedWrite && addedWrite.text)
+const addedCard = view.findAll('sc-card').filter((n) => n.props['data-key'] === added[0])[0]
+ok(!!addedCard, 'the new branch node is on the canvas')
+eq(addedCard.props['data-type'], 'node', 'and it is a node')
+eq(view.findAll('sc-choiceadd').length, 2, 'both branch nodes offer a ＋ option button (the new one has no choices yet)')
+
+// ── P. chapter cards carry no time ───────────────────────────────────────────
+console.log('\nP. chapters have no in-story time')
+view.click(view.findAll('sc-navbtn').filter((n) => n.props.title === '回到上级')[0])
+await tick()
+const chCardP = view.findAll('sc-card').filter((n) => n.props['data-key'] === G2)[0]
+ok(!!chCardP, 'the second chapter is on level 1')
+ok(view.textOf(chCardP).indexOf('第99天') === -1, 'a chapter card never prints a time, even when the file has one')
+view.fire(chCardP, 'onContextMenu', { clientX: 320, clientY: 200 })
+await tick()
+view.click(view.findAll('sc-menuitem').filter((n) => view.textOf(n).indexOf('展开') !== -1)[0])
+await wait(60)
+view.click(view.findAll('sc-btn').filter((n) => view.textOf(n).indexOf('在详情里编辑') !== -1)[0])
+await tick()
+const chModal = view.findMaybe('sc-modal')
+ok(!!chModal, 'the chapter editor opened')
+ok(view.textOf(chModal).indexOf('时间') === -1, 'the chapter editor has no time field')
+view.click(view.findAll('sc-btn').filter((n) => view.textOf(n).indexOf('保存（写回') !== -1)[0])
+await tick()
+await tick()
+const chWrite = writes.filter((w) => w.path === CARDS_DIR + '/chapter-g2.md').pop()
+ok(!!chWrite, 'saving a chapter wrote its file back')
+ok(!!chWrite && chWrite.text.indexOf('when:') === -1, 'saving a chapter drops the stale time line', chWrite && chWrite.text)
+view.click(view.find('sc-expandx'))
+await tick()
+
+// ── Q. the canvas is drawn on the pixel grid ─────────────────────────────────
+// 糊的根源是「缩放/平移一直走过渡 + 合成层拿旧位图拉伸 + 层原点落在小数像素上」。
+console.log('\nQ. the canvas stays crisp')
+const stageStyle = view.find('sc-stage').props.style
+ok(/^translate\(-?\d+px,-?\d+px\) scale\(/.test(String(stageStyle.transform)), 'the stage origin is snapped to whole pixels', stageStyle.transform)
+eq(stageStyle.transition, 'none', 'panning/zooming is not animated through a cached bitmap')
+const styles = h.created().map((el) => el.textContent).join('\n').replace(/\/\*[\s\S]*?\*\//g, '')
+ok(!/will-change\s*:\s*transform/.test(styles), 'nothing pins the 8000×8000 canvas into one composited layer')
+const atZoom = () => parseInt(String(view.find('sc-boardtip').props.children), 10)
+// 每次都重新查：无头渲染器没有事件委托，抓着旧节点等于抓着旧闭包里的 view。
+const zoomBtn = (title) => view.findAll('sc-navbtn').filter((n) => n.props.title === title)[0]
+view.click(zoomBtn('放大'))
+await tick()
+const z1 = atZoom()
+view.click(zoomBtn('放大'))
+await tick()
+const z2 = atZoom()
+ok(z2 > z1, 'the zoom buttons still zoom', [z1, z2])
+ok([25, 33, 50, 67, 80, 100, 125, 150, 200].indexOf(z2) !== -1, 'zoom lands on a clean step, not 112%', z2)
+view.click(zoomBtn('缩小'))
+await tick()
+eq(atZoom(), z1, 'zooming back out returns to the previous step')
+view.fire(canvas, 'onWheel', { ctrlKey: true, deltaY: -120, clientX: 400, clientY: 300 })
+await tick()
+ok([25, 33, 50, 67, 80, 100, 125, 150, 200].indexOf(atZoom()) !== -1, 'Ctrl+wheel also lands on a clean step', atZoom())
 
 console.log('\n' + (failures === 0 ? 'ALL GREEN' : 'FAILURES: ' + failures) + '  (' + checks + ' checks, ' + view.renderCount() + ' renders)')
 if (failures !== 0) process.exit(1)
