@@ -446,19 +446,20 @@ await tick()
 eq(view.findAll('sc-card').length, 5, 'panel is back on the original archive (still inside the chapter)')
 has(view.text(), 'G1.1 章节甲', 'the chapter crumb still resolves')
 
-// ── J. zoom and pan ──────────────────────────────────────────────────────────
-console.log('\nJ. zoom and pan')
+// ── J. zoom ──────────────────────────────────────────────────────────────────
+// 滚轮是插件自己用 ref + addEventListener 挂的（React 的 onWheel 是 passive 的，
+// preventDefault 在它里面无效），所以派发也得走 h.el。每次都重查画布节点：无头渲染器
+// 没有事件委托，抓着旧节点等于抓着旧闭包里的 view。
+console.log('\nJ. zoom')
+const wheel = (ev) => view.el(view.find('sc-canvas'), 'wheel', ev)
 const before = view.find('sc-boardtip').props.children
-view.fire(canvas, 'onWheel', { ctrlKey: true, deltaY: -120, clientX: 400, clientY: 300 })
+wheel({ deltaY: -120, clientX: 400, clientY: 300 })
 await tick()
 const after = view.find('sc-boardtip').props.children
-ok(String(after) !== String(before), 'Ctrl+wheel changed the zoom', [before, after])
+ok(String(after) !== String(before), 'a plain wheel (no modifier) changes the zoom', [before, after])
 ok(parseInt(String(after), 10) > parseInt(String(before), 10), 'scrolling up zooms in', [before, after])
 has(view.find('sc-stage').props.style.transform, 'scale(', 'the canvas scales through a transform (relative positions hold)')
-view.fire(canvas, 'onWheel', { deltaX: 0, deltaY: 100, clientX: 400, clientY: 300 })
-await tick()
-ok(!!view.find('sc-stage'), 'plain wheel panning does not throw')
-ok(!/NaN/.test(String(view.find('sc-stage').props.style.transform)), 'panning keeps the transform numeric')
+ok(!/NaN/.test(String(view.find('sc-stage').props.style.transform)), 'the transform stays numeric')
 
 // ── K. keyboard shortcuts ────────────────────────────────────────────────────
 console.log('\nK. keyboard shortcuts')
@@ -659,9 +660,94 @@ ok([25, 33, 50, 67, 80, 100, 125, 150, 200].indexOf(z2) !== -1, 'zoom lands on a
 view.click(zoomBtn('缩小'))
 await tick()
 eq(atZoom(), z1, 'zooming back out returns to the previous step')
-view.fire(canvas, 'onWheel', { ctrlKey: true, deltaY: -120, clientX: 400, clientY: 300 })
+wheel({ ctrlKey: true, deltaY: -120, clientX: 400, clientY: 300 })
 await tick()
-ok([25, 33, 50, 67, 80, 100, 125, 150, 200].indexOf(atZoom()) !== -1, 'Ctrl+wheel also lands on a clean step', atZoom())
+ok([25, 33, 50, 67, 80, 100, 125, 150, 200].indexOf(atZoom()) !== -1, 'Ctrl/⌘+wheel (trackpad pinch) lands on a clean step too', atZoom())
+
+// ── R. blank canvas: left-drag pans ──────────────────────────────────────────
+// 默认左键拖画布。要紧的是：卡片上的按下会冒泡到画布，那一路必须让开，不能把同一次
+// 拖动接管成平移。
+console.log('\nR. blank canvas: left-drag pans')
+const translateOf = () => {
+  const m = /^translate\((-?\d+)px,(-?\d+)px\)/.exec(String(view.find('sc-stage').props.style.transform))
+  return { x: Number(m[1]), y: Number(m[2]) }
+}
+const blank = { getAttribute: () => null, parentNode: null }
+const r0 = translateOf()
+view.fire(view.find('sc-canvas'), 'onPointerDown', { button: 0, clientX: 400, clientY: 300, target: blank })
+await tick()
+ok(String(view.find('sc-canvas').props.className).indexOf('panning') !== -1, 'the canvas switches to a grabbing cursor while panning')
+view.window('pointermove', { clientX: 460, clientY: 340 })
+await tick()
+view.window('pointerup', { clientX: 460, clientY: 340 })
+await tick()
+const r1 = translateOf()
+eq(r1.x - r0.x, 60, 'left-drag moves the canvas sideways')
+eq(r1.y - r0.y, 40, 'and up/down too (the wheel alone could only ever do one axis)')
+ok(String(view.find('sc-canvas').props.className).indexOf('panning') === -1, 'the cursor goes back on release')
+
+const rCard = view.findAll('sc-card')[0]
+const onCardTarget = { getAttribute: (a) => (a === 'data-key' ? rCard.props['data-key'] : null), parentNode: null }
+view.fire(view.find('sc-canvas'), 'onPointerDown', { button: 0, clientX: 200, clientY: 200, target: onCardTarget })
+view.window('pointermove', { clientX: 260, clientY: 240 })
+await tick()
+view.window('pointerup', { clientX: 260, clientY: 240 })
+await tick()
+const r2 = translateOf()
+eq(r2.x, r1.x, 'a press that starts on a card never pans the canvas sideways')
+eq(r2.y, r1.y, 'nor vertically')
+
+// ── S. wheel: plain = zoom, Shift/Alt = pan ──────────────────────────────────
+console.log('\nS. wheel: zoom by default, modifiers pan')
+const zoomNow = () => atZoom()
+const s0 = translateOf()
+const z0 = zoomNow()
+wheel({ shiftKey: true, deltaY: 90 })
+await tick()
+const s1 = translateOf()
+eq(s1.x, s0.x - 90, 'Shift+wheel moves the canvas sideways')
+eq(s1.y, s0.y, 'Shift+wheel leaves the vertical position alone')
+eq(zoomNow(), z0, 'Shift+wheel does not zoom')
+wheel({ altKey: true, deltaY: 70 })
+await tick()
+const s2 = translateOf()
+eq(s2.y, s1.y - 70, 'Alt+wheel moves the canvas vertically')
+eq(s2.x, s1.x, 'Alt+wheel leaves the horizontal position alone')
+
+// ── T. the option column is not clipped away ─────────────────────────────────
+// 「分歧节点右边没有选项」的根子是 .sc-card 自己 overflow:hidden —— 选项列挂在
+// left:100%（卡片盒子之外），整列连同出口圆点被裁掉；接口圆点也被裁成半个。
+// 无头渲染器没有布局，看不到「被裁掉」，只能把这条样式契约钉死。
+console.log('\nT. the option column is not clipped away')
+const cssText = h.created().map((el) => el.textContent).join('\n').replace(/\/\*[\s\S]*?\*\//g, '')
+const rule = (sel) => (cssText.match(new RegExp('\\' + sel + '\\{[^}]*\\}')) || [''])[0]
+const cardRule = rule('.sc-card')
+ok(cardRule !== '', 'the .sc-card rule is in the stylesheet')
+ok(cardRule.indexOf('overflow:hidden') === -1, 'a card does not clip its own overflow (the choice column lives outside the card box)', cardRule)
+has(rule('.sc-choices'), 'left:100%', 'the choice column hangs off the card to the right')
+const portRule = rule('.sc-port')
+has(portRule, 'border-radius:50%', 'a port is a circle')
+ok(portRule.indexOf('background:var(--sc-accent') === -1, 'a port is hollow — the accent colour is the ring, not the fill', portRule)
+eq((portRule.match(/opacity:(\S+?)[;}]/) || [])[1], '.45', 'ports are visible without hunting for them with the mouse')
+
+// ── U. a rubber band starts at the option it was pulled from ─────────────────
+console.log('\nU. a link drag starts at that option')
+view.fire(view.findAll('sc-card').filter((n) => n.props['data-key'] === G1)[0], 'onDoubleClick', {})
+await tick()
+const n3rec = JSON.parse(files[GRAPH]).nodes[N3]
+const linkPort = view.findAll('sc-port').filter((n) => n.props['data-port'] === 'out' && n.props['data-choice'] === 'o1')[0]
+ok(!!linkPort, 'the option still has its own out port')
+view.fire(linkPort, 'onPointerDown', { clientX: 300, clientY: 300 })
+await tick()
+const tempEdge = view.findAll('temp')[0]
+ok(!!tempEdge, 'a rubber band is drawn while dragging')
+const start = /^M(-?[\d.]+),(-?[\d.]+)/.exec(String(tempEdge && tempEdge.props.d))
+ok(!!start, 'the rubber band has a start point', tempEdge && tempEdge.props.d)
+eq(Number(start[2]), n3rec.cy + 23, 'it starts at that option row, not at the middle of the card')
+ok(Number(start[2]) !== n3rec.cy + 40, "it is not the card's own out port either")
+view.window('pointerup', { clientX: 300, clientY: 300 })
+await tick()
+ok(!view.findMaybe('temp'), 'the rubber band goes away when the drag ends')
 
 console.log('\n' + (failures === 0 ? 'ALL GREEN' : 'FAILURES: ' + failures) + '  (' + checks + ' checks, ' + view.renderCount() + ' renders)')
 if (failures !== 0) process.exit(1)

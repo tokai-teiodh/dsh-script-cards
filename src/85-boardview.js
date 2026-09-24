@@ -5,7 +5,8 @@
 //   下级（chapter）排章节内部情节：该章节的节点 / 条件 / 结果
 //
 // 导航栏照浏览器的样子做：后退 / 前进 / 回到上级 / 地址（面包屑）。
-// 画布支持滚轮平移、Ctrl+滚轮缩放、空白拖动平移。
+// 画布：空白处左键拖动平移（中键、Alt+左键也行），滚轮缩放（以指针为中心），
+//       Shift+滚轮左右移、Alt+滚轮上下移。
 // 展开动画：先把视角平移到卡片居中（相对位置不变）→ 卡片放大 → 背景虚化。
 // ══════════════════════════════════════════════════════════════════════════════
 
@@ -33,6 +34,7 @@ function BoardView(props) {
   const [expand, setExpand] = React.useState(null)
   const [drag, setDrag] = React.useState(null)
   const [ghost, setGhost] = React.useState(null)
+  const [panOn, setPanOn] = React.useState(false)
   const [fav, setFav] = React.useState(readFav)
 
   const canvasRef = React.useRef(null)
@@ -239,7 +241,7 @@ function BoardView(props) {
       setDrag(null)
       return
     }
-    if (panRef.current) { panRef.current = null; return }
+    if (panRef.current) { panRef.current = null; setPanOn(false); return }
     if (dockRef.current) {
       const d = dockRef.current
       dockRef.current = null
@@ -268,16 +270,22 @@ function BoardView(props) {
   React.useEffect(function () {
     function move(e) { movePointers(e) }
     function up(e) { upPointers(e) }
+    function wheel(e) { onWheel(e) }
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
+    // 滚轮得自己挂，而且不能被当成 passive：React 是把 onWheel 注册成 passive 监听器的，
+    // 里面调 preventDefault() 根本无效 —— 于是滚轮一边缩放，页面一边跟着滚/跟着缩放。
+    const el = canvasRef.current
+    if (el && typeof el.addEventListener === 'function') el.addEventListener('wheel', wheel, { passive: false })
     return function () {
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
+      if (el && typeof el.removeEventListener === 'function') el.removeEventListener('wheel', wheel)
     }
   })
 
-  function hitCard(clientX, clientY) {
-    const el = typeof document !== 'undefined' && document.elementFromPoint ? document.elementFromPoint(clientX, clientY) : null
+  /** 从这个元素往上找卡片 key（真实 DOM 里靠 data-key 认卡片）。 */
+  function keyUnder(el) {
     let node = el
     while (node && node.getAttribute) {
       const k = node.getAttribute('data-key')
@@ -287,30 +295,43 @@ function BoardView(props) {
     return null
   }
 
+  function hitCard(clientX, clientY) {
+    const el = typeof document !== 'undefined' && document.elementFromPoint ? document.elementFromPoint(clientX, clientY) : null
+    return keyUnder(el)
+  }
+
   function onCanvasDown(e) {
-    if (e.button === 1 || (e.button === 0 && e.altKey)) {
+    // 空白处：左键（默认）/ 中键 / Alt+左键都拖画布。卡片上的按下不算 —— 那是拖卡片，
+    // 事件会冒泡到这里来，得让开，不然一次拖动会被两条路同时接管。
+    const blank = !keyUnder(e.target) && !expand
+    if (e.button === 0 && blank) setSel(null)
+    if (e.button === 1 || (e.button === 0 && blank)) {
       panRef.current = { px: e.clientX, py: e.clientY, vx: view.x, vy: view.y, s: view.s }
+      setPanOn(true)
       e.preventDefault()
-      return
     }
-    if (e.button === 0 && e.target === e.currentTarget) setSel(null)
   }
 
   function onWheel(e) {
-    if (e.ctrlKey || e.metaKey) {
-      const box = canvasBox()
-      const s2 = zoomStep(view.s, e.deltaY < 0 ? 1 : -1)
-      const px = e.clientX - box.left
-      const py = e.clientY - box.top
-      const x2 = px - ((px - view.x) / view.s) * s2
-      const y2 = py - ((py - view.y) / view.s) * s2
-      setView({ x: x2, y: y2, s: s2 })
-    } else {
-      // deltaX/deltaY 偶尔缺失（合成事件、老浏览器），缺了就当 0 —— 否则 view 里
-      // 会混进 NaN，整块画布跟着一起废掉。
-      setView({ x: view.x - (Number(e.deltaX) || 0), y: view.y - (Number(e.deltaY) || 0), s: view.s })
-    }
     e.preventDefault()
+    // deltaX/deltaY 偶尔缺失（合成事件、老浏览器），缺了就当 0 —— 否则 view 里
+    // 会混进 NaN，整块画布跟着一起废掉。
+    const dx = Number(e.deltaX) || 0
+    const dy = Number(e.deltaY) || 0
+    if (e.shiftKey || e.altKey) {
+      // 滚轮让给缩放之后，得留一条纯平移的路：Shift 左右、Alt 上下。
+      setView(e.shiftKey
+        ? { x: view.x - (dy + dx), y: view.y, s: view.s }
+        : { x: view.x, y: view.y - dy, s: view.s })
+      return
+    }
+    // 默认滚轮就是缩放，以指针为中心。Ctrl/⌘+滚轮照样缩放 —— 触控板捏合走的就是它。
+    const s2 = zoomStep(view.s, dy < 0 ? 1 : -1)
+    if (s2 === view.s) return
+    const box = canvasBox()
+    const px = e.clientX - box.left
+    const py = e.clientY - box.top
+    setView({ x: px - ((px - view.x) / view.s) * s2, y: py - ((py - view.y) / view.s) * s2, s: s2 })
   }
 
   function startLink(e, card, choice) {
@@ -318,6 +339,13 @@ function BoardView(props) {
     const p = toCanvas(e.clientX, e.clientY)
     linkRef.current = { from: k, choice: choice || '', x: p.x, y: p.y }
     setLink(linkRef.current)
+  }
+
+  /** 这条橡皮筋是从哪个选项拉出来的（-1 = 从卡片本身的出口）。 */
+  function choiceIndexOf(l) {
+    if (!l || !l.choice) return -1
+    const rec = nodeRec(graph, l.from)
+    return (rec.choices || []).findIndex(function (ch) { return ch.id === l.choice })
   }
 
   function dropLink(e, card) {
@@ -685,8 +713,8 @@ function BoardView(props) {
   return React.createElement('div', { className: 'sc-board' },
     nav,
     React.createElement('div', {
-      className: 'sc-canvas', ref: canvasRef,
-      onPointerDown: onCanvasDown, onWheel: onWheel, onContextMenu: onCanvasMenu,
+      className: 'sc-canvas' + (panOn ? ' panning' : ''), ref: canvasRef,
+      onPointerDown: onCanvasDown, onContextMenu: onCanvasMenu,
     },
       React.createElement('div', { className: 'sc-stage' + (expand && expand.open ? ' blur' : ''), style: stageStyle },
         React.createElement('div', { className: 'sc-dots' }),
@@ -702,7 +730,9 @@ function BoardView(props) {
         link ? React.createElement('svg', { className: 'sc-edges', width: 8000, height: 8000 },
           React.createElement('path', {
             className: 'sc-edge temp',
-            d: edgePath(outPoint(rects[link.from] || { x: 0, y: 0, w: 0, h: 0 }, -1), { x: link.x, y: link.y }),
+            // 从「你拉的那一项」自己的出口起笔，而不是卡片右侧正中：分歧节点上选项有
+            // 好几个，起点错了整条橡皮筋就是歪的。
+            d: edgePath(outPoint(rects[link.from] || { x: 0, y: 0, w: 0, h: 0 }, choiceIndexOf(link)), { x: link.x, y: link.y }),
           })
         ) : null,
         cardEls
@@ -723,6 +753,7 @@ function BoardView(props) {
       React.createElement('span', null, level === 'root'
         ? '上级：排列章节（双击章节卡片进入下级）'
         : '下级：排本章节的情节顺序（双击卡片展开）'),
+      React.createElement('span', null, '· 空白处左键拖动平移 · 滚轮缩放（Shift/Alt+滚轮左右上下）'),
       React.createElement('span', null, '· 右键空白处新建 / 粘贴'),
       React.createElement('span', { className: 'sp' }),
       React.createElement('button', {

@@ -37,6 +37,9 @@ export function createHarness() {
   const visited = new Set()
   const effectQueue = []
   const listeners = new Map()
+  // 元素级监听器（插件里用 ref + addEventListener 挂的那些，比如非 passive 的 wheel），
+  // 按渲染路径存 —— ref 每次渲染都会拿到一个新的壳，监听器不能挂在壳上。
+  const elListeners = new Map()
   const created = []
   let storage = {}
 
@@ -93,10 +96,22 @@ export function createHarness() {
 
   // ── tree walking ─────────────────────────────────────────────────────────
   function fakeEl(node) {
+    let map = elListeners.get(node.path)
+    if (!map) { map = new Map(); elListeners.set(node.path, map) }
     return {
       __host: node,
       getBoundingClientRect: function () { return node.rect },
       style: node.props.style || {},
+      addEventListener: function (type, fn) {
+        if (!map.has(type)) map.set(type, [])
+        map.get(type).push(fn)
+      },
+      removeEventListener: function (type, fn) {
+        const list = map.get(type)
+        if (!list) return
+        const i = list.indexOf(fn)
+        if (i !== -1) list.splice(i, 1)
+      },
     }
   }
 
@@ -344,6 +359,22 @@ export function createHarness() {
 
   function click(node, ev) { return fire(node, 'onClick', ev) }
 
+  // 派发给「用 ref + addEventListener 挂上去」的监听器（React 的 onWheel 是 passive，
+  // 插件因此自己挂 wheel，测试也得走这条路）。
+  function elEvent(node, type, ev) {
+    const map = elListeners.get(node.path)
+    const list = map && map.get(type) ? map.get(type).slice() : []
+    if (!list.length) throw new Error('no ' + type + ' listener on .' + classesOf(node).join('.'))
+    const e = Object.assign({
+      stopPropagation: function () {},
+      preventDefault: function () {},
+      button: 0,
+    }, ev || {})
+    let out
+    for (const fn of list) out = fn(e)
+    return out
+  }
+
   function mount(el) {
     rootEl = el
     renderNow()
@@ -358,6 +389,7 @@ export function createHarness() {
       textOf: textOf,
       click: click,
       fire: fire,
+      el: elEvent,
       window: dispatchWindow,
       renderCount: function () { return renderCount },
       defer: function (on) { defer = !!on },

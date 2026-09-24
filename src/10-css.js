@@ -86,7 +86,8 @@ const CSS = `
 .sc-crumb.cur{color:var(--dsw-alias-label-primary);font-weight:600;cursor:default;text-decoration:none}
 .sc-crumbsep{flex:none;color:var(--dsw-alias-label-secondary);opacity:.5;font-size:11px}
 .sc-boardtip{font-size:10.5px;color:var(--dsw-alias-label-secondary);flex:none;font-family:ui-monospace,Menlo,Consolas,monospace;opacity:.85}
-.sc-canvas{flex:1;min-height:0;position:relative;overflow:hidden;background:var(--dsw-alias-bg-layer-1);user-select:none;touch-action:none}
+.sc-canvas{flex:1;min-height:0;position:relative;overflow:hidden;background:var(--dsw-alias-bg-layer-1);user-select:none;touch-action:none;cursor:grab}
+.sc-canvas.panning{cursor:grabbing}
 /* 不要给画布加 will-change:transform：那会把这层（里面有 8000×8000 的点阵与 SVG）
    钉成一个合成层，缩放/平移时浏览器会拿旧位图拉伸，整块画布就糊了。加了它以后
    文字要清晰只能靠运气。 */
@@ -104,8 +105,11 @@ const CSS = `
 .sc-scrim{position:absolute;inset:0;background:rgba(0,0,0,.32);opacity:0;transition:opacity .24s ease;pointer-events:none}
 .sc-scrim.on{opacity:1}
 
-/* 卡片（章节 / 节点 / 条件 / 结果共用外壳） */
-.sc-card{position:absolute;box-sizing:border-box;border-radius:12px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-base);box-shadow:0 2px 8px rgba(0,0,0,.14);padding:8px 10px;cursor:grab;user-select:none;touch-action:none;overflow:hidden;transition:box-shadow .15s,border-color .15s}
+/* 卡片（章节 / 节点 / 条件 / 结果共用外壳）。
+   这里必须是 overflow:visible：分歧节点的选项列是「贴在卡片右侧」的（left:100%），
+   卡片一旦自己裁溢出，整列选项连同它们的出口圆点会被裁得干干净净 —— 画布上看起来
+   就是「分歧节点右边什么都没有」；接口圆点也会一起被裁成半个。 */
+.sc-card{position:absolute;box-sizing:border-box;border-radius:12px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-base);box-shadow:0 2px 8px rgba(0,0,0,.14);padding:8px 10px;cursor:grab;user-select:none;touch-action:none;overflow:visible;transition:box-shadow .15s,border-color .15s}
 .sc-card:hover{border-color:var(--dsw-alias-label-secondary)}
 .sc-card.on{border-color:var(--sc-accent,var(--dsw-alias-brand-primary));box-shadow:0 0 0 2px var(--sc-accent,var(--dsw-alias-brand-primary))}
 .sc-card.dye{border-color:var(--sc-accent);background:color-mix(in srgb,var(--sc-accent) 9%,var(--dsw-alias-bg-base))}
@@ -123,21 +127,23 @@ const CSS = `
 .sc-cardsecname{font-size:10px;letter-spacing:.1em;color:var(--dsw-alias-label-secondary);margin-bottom:2px}
 .sc-cardlist{margin:0;padding-left:14px}
 .sc-cardlist li{font-size:11.5px;line-height:1.6}
-.sc-port{position:absolute;top:50%;margin-top:-8px;width:16px;height:16px;border-radius:50%;background:var(--sc-accent,var(--dsw-alias-brand-primary));border:2px solid var(--dsw-alias-bg-base);cursor:crosshair;opacity:0;transition:opacity .12s}
-.sc-port.in{left:-9px}
-.sc-port.out{right:-9px}
+/* 接口圆点：整个圆 + 空心（底是卡片自己的底色，只有一圈本色描边），不再被卡片裁成
+   半个。平时就有半透明，悬停 / 选中 / 拉到一半时整亮 —— 否则「哪里能拉线」只能靠猜。 */
+.sc-port{position:absolute;top:50%;margin-top:-7px;width:14px;height:14px;box-sizing:border-box;border-radius:50%;background:var(--dsw-alias-bg-base);border:2px solid var(--sc-accent,var(--dsw-alias-brand-primary));cursor:crosshair;opacity:.45;transition:opacity .12s,transform .12s}
+.sc-port.in{left:-7px}
+.sc-port.out{right:-7px}
 .sc-card:hover .sc-port,.sc-card.on .sc-port{opacity:1}
-.sc-port.hot{opacity:1;transform:scale(1.25)}
+.sc-port.hot{opacity:1;transform:scale(1.3)}
 .sc-elabel{position:absolute;transform:translate(-50%,-50%);font-size:10.5px;padding:1px 6px;border-radius:999px;background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary);cursor:pointer;white-space:nowrap;max-width:130px;overflow:hidden;text-overflow:ellipsis}
 .sc-elabel.on{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary)}
 .sc-elabel.empty{opacity:.45;font-style:italic}
 
 /* 分歧节点的选项：贴在卡片右侧 */
-.sc-choices{position:absolute;left:100%;top:8px;margin-left:14px;width:170px;display:flex;flex-direction:column;gap:5px}
+.sc-choices{position:absolute;left:100%;top:8px;margin-left:14px;width:170px;display:flex;flex-direction:column;gap:5px;z-index:2}
 .sc-choice{position:relative;border:1px solid var(--dsw-alias-border-l2);border-radius:9px;background:var(--dsw-alias-bg-layer-2);padding:5px 8px;font-size:11.5px;line-height:1.45;cursor:pointer;white-space:normal;word-break:break-word}
 .sc-choice:hover{border-color:var(--sc-accent,var(--dsw-alias-brand-primary))}
 .sc-choice.on{border-color:var(--sc-accent,var(--dsw-alias-brand-primary));color:var(--sc-accent,var(--dsw-alias-brand-primary))}
-.sc-choice .sc-port{top:50%;margin-top:-8px;opacity:1}
+.sc-choice .sc-port{top:50%;margin-top:-7px;opacity:1}
 .sc-choice .sc-choicego{float:right;margin-left:6px;opacity:.75}
 .sc-choice.linked{border-color:var(--sc-accent,var(--dsw-alias-brand-primary))}
 .sc-choiceadd{border:1px dashed var(--dsw-alias-border-l2);border-radius:9px;background:transparent;color:var(--dsw-alias-label-secondary);font-size:11px;font-family:inherit;padding:4px 8px;cursor:pointer;text-align:left}
