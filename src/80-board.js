@@ -2,9 +2,14 @@
 // 分支画布：几何、卡片、连线、底部堆叠条
 // ══════════════════════════════════════════════════════════════════════════════
 
-const CARD_W = { chapter: 208, node: 184, condition: 172, result: 172 }
-const CARD_H = { chapter: 96, node: 80, condition: 58, result: 58 }
-const CHOICE_W = 170
+// 卡片尺寸（宽 × 高）。用户的要求：「长宽比改一下，流程横着放会很显得很长，与目前接近
+// 竖屏的比例不相契合」—— 侧栏是竖的，卡片以前是 2.3:1 的横条，一层层往右排出去就是一条
+// 又长又扁的带子。现在四种卡片都是竖着的（高 ≈ 宽的 0.65～0.78），流程整体跟着变窄变高，
+// 贴住竖屏；卡片窄了以后内容排布也跟着调（简介钉在卡片下沿，见 10-css.js）。
+const CARD_W = { chapter: 176, node: 156, condition: 144, result: 144 }
+const CARD_H = { chapter: 120, node: 112, condition: 86, result: 86 }
+// 选项列跟着卡片一起收窄：它挂在这张卡右边，比卡片还宽就会显得是另一张卡。
+const CHOICE_W = 156
 const CHOICE_H = 30
 const CHOICE_GAP = 5
 const CHOICE_DX = 14
@@ -224,7 +229,8 @@ function CardBody(props) {
   }
 
   if (type === 'condition' || type === 'result') {
-    return React.createElement('div', null,
+    // 竖版卡片比两行字高，内容竖直居中才不显得头重脚轻
+    return React.createElement('div', { className: 'sc-cardcenter' },
       React.createElement('div', { className: 'sc-cardkind' }, typeLabel(type)),
       React.createElement('div', { className: 'sc-cardmono' }, c.title || plainText(c.body, 40) || '—')
     )

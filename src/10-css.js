@@ -106,6 +106,9 @@ const CSS = `
 .sc-stage{position:absolute;left:0;top:0;transform-origin:0 0;transition:transform .28s cubic-bezier(.22,.61,.36,1)}
 .sc-stage.notrans{transition:none}
 .sc-stage.blur{filter:blur(3px) saturate(.7);pointer-events:none}
+/* 框选的框：画布坐标、跟着画布一起缩放，只画一条虚线 + 一层极淡的底，不挡任何点击。
+   它在 DOM 上排在卡片**后面**，所以得自己抬层级（5），否则被卡片盖住就看不见了。 */
+.sc-marquee{position:absolute;z-index:5;box-sizing:border-box;border:1px dashed var(--dsw-alias-brand-primary);background:rgba(127,127,127,.16);border-radius:2px;pointer-events:none}
 .sc-dots{position:absolute;left:-4000px;top:-4000px;width:8000px;height:8000px;pointer-events:none;background-image:radial-gradient(var(--dsw-alias-border-l1) 1px,transparent 1px);background-size:22px 22px;opacity:.7}
 .sc-edges{position:absolute;left:-4000px;top:-4000px;overflow:visible;pointer-events:none}
 /* 连线。颜色绝对不能用 --dsw-alias-border-l2：那是「描边级」的颜色，深色主题下算出来
@@ -136,7 +139,12 @@ const CSS = `
 .sc-cardcode{flex:none;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;font-weight:700;color:var(--sc-accent,var(--dsw-alias-brand-primary));letter-spacing:.02em}
 .sc-cardname{flex:1;min-width:0;font-size:12.5px;font-weight:600;line-height:1.35;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .sc-cardwhen{flex:none;font-size:10.5px;color:var(--dsw-alias-label-secondary);font-family:ui-monospace,Menlo,Consolas,monospace}
-.sc-cardsum{margin-top:5px;font-size:11px;line-height:1.5;color:var(--dsw-alias-label-secondary);overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+/* 简介钉在卡片下沿：卡片改成竖版（宽 176/156/144、高 120/112/86）之后，标题和标签
+   只占上半张，简介留在标题下面会有一大块空 —— auto 上边距把它压到下沿，
+   跟方片页的方片是同一个观感。 */
+.sc-cardsum{margin-top:auto;font-size:11px;line-height:1.5;color:var(--dsw-alias-label-secondary);overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+/* 条件 / 结果卡片只有两行字，竖版卡片里竖直居中 */
+.sc-cardcenter{display:flex;flex-direction:column;justify-content:center;height:100%;gap:2px}
 .sc-cardmono{margin-top:5px;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-primary);overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 .sc-cardkind{font-size:10px;letter-spacing:.12em;color:var(--dsw-alias-label-secondary);text-transform:uppercase}
 .sc-cardbody{margin-top:6px;font-size:11.5px;line-height:1.65;color:var(--dsw-alias-label-primary);overflow:auto;flex:1;min-height:0}

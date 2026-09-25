@@ -112,7 +112,7 @@ function findBrowser() {
 // ── 画布几何：与 src/80-board.js 的常量保持一致 ───────────────────────────────
 const CHOICE_H = 30
 const CHOICE_GAP = 5
-const CHOICE_W = 170
+const CHOICE_W = 156
 const CHOICE_DX = 14
 const PORT_DX = 8
 const EDGE_PAD = 4000
@@ -129,9 +129,9 @@ function edgePath(a, b) {
   return 'M' + a.x + ',' + a.y + ' C' + (a.x + dx) + ',' + a.y + ' ' + (b.x - dx) + ',' + b.y + ' ' + b.x + ',' + b.y
 }
 
-const NODE = { w: 184, h: 80 }
-const RESULT = { w: 172, h: 58 }
-const CONDITION = { w: 172, h: 58 }
+const NODE = { w: 156, h: 112 }
+const RESULT = { w: 144, h: 86 }
+const CONDITION = { w: 144, h: 86 }
 const A = { x: 40, y: 60, w: NODE.w, h: NODE.h }
 const B = { x: 400, y: 40, w: NODE.w, h: NODE.h }
 const C = { x: 400, y: 240, w: RESULT.w, h: RESULT.h }

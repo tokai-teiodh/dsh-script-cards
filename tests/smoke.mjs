@@ -797,6 +797,11 @@ ok(zOf('.sc-elabel') < zOf('.sc-expand'), 'but still below the expanded card', [
 const bundle = fs.readFileSync(CLIENT, 'utf8')
 const plainCalls = ['TagRow', 'Tile', 'ArchiveDetail', 'CardBody'].filter((n) => bundle.indexOf(n + '({') !== -1)
 eq(plainCalls.join(','), '', 'no hook-bearing component is invoked as a plain function')
+// 框选的框：不能挡点击（拖完那一下右键还要能落到卡片/空白上），层级要高过卡片
+const mqRule = rule('.sc-marquee')
+has(mqRule, 'pointer-events:none', 'the selection box never gets in the way of a click')
+has(mqRule, 'position:absolute', 'the selection box is placed in canvas coordinates')
+ok(zOf('.sc-marquee') > 0, 'and it paints above the cards it is selecting', zOf('.sc-marquee'))
 // 连线必须是看得见的颜色：--dsw-alias-border-l2 是 12% 白，画成线等于全透明。
 const edgeRule = rule('.sc-edge')
 has(edgeRule, 'stroke:var(--dsw-alias-label-secondary)', 'edges use the secondary label colour, not a 12%-alpha border colour')
@@ -849,8 +854,10 @@ const tempEdge = view.findAll('temp')[0]
 ok(!!tempEdge, 'a rubber band is drawn while dragging')
 const start = /^M(-?[\d.]+),(-?[\d.]+)/.exec(String(tempEdge && tempEdge.props.d))
 ok(!!start, 'the rubber band has a start point', tempEdge && tempEdge.props.d)
-eq(Number(start[2]), n3rec.cy + 23, 'it starts at that option row, not at the middle of the card')
-ok(Number(start[2]) !== n3rec.cy + 40, "it is not the card's own out port either")
+const n3H0 = Number(view.findAll('sc-card').filter((n) => n.props['data-key'] === N3)[0].props.style.height)
+const optRowCenter = Math.round(n3H0 / 2 - (2 * 30 + 1 * 5) / 2) + 15
+eq(Number(start[2]), n3rec.cy + optRowCenter, 'it starts at that option row, not at the middle of the card')
+ok(Number(start[2]) !== n3rec.cy + n3H0 / 2, "it is not the card's own out port either")
 view.window('pointerup', { clientX: 300, clientY: 300 })
 await tick()
 ok(!view.findMaybe('temp'), 'the rubber band goes away when the drag ends')
@@ -919,7 +926,8 @@ ok(String(portOf(N1, 'in').props.className).indexOf('hot') === -1, 'the highligh
 const choiceCol = subtreeOf(cardNodeOf(N3)).filter((n) => n.kind === 'host' && String(n.props.className).indexOf('sc-choices') !== -1)[0]
 const rowCount = (JSON.parse(files[GRAPH]).nodes[N3].choices || []).length
 eq(rowCount, 2, 'the branch node has two options at this point')
-eq(choiceCol.props.style.top, Math.round(80 / 2 - (rowCount * 30 + (rowCount - 1) * 5) / 2), 'the option column is vertically centred on the card')
+const n3Box = cardNodeOf(N3).props.style
+eq(choiceCol.props.style.top, Math.round(Number(n3Box.height) / 2 - (rowCount * 30 + (rowCount - 1) * 5) / 2), 'the option column is vertically centred on the card')
 ok(Number.isInteger(choiceCol.props.style.top), 'and it lands on a whole pixel')
 // 直接子元素（无头渲染器把 JSX 里的数组包成一层 frag，得自己拆开）。
 const directKids = (n) => {
@@ -998,8 +1006,8 @@ await tick()
 const yDuring = edgeStartXY()
 const liveCard = cardNodeOf(N1)
 ok(!!yDuring && (yDuring.x !== yBefore.x || yDuring.y !== yBefore.y), 'the line moved while the drag is still going on', [yBefore, yDuring])
-eq(yDuring.x, liveCard.props.style.left + 184 + 8, 'the line starts at the right edge of where the card is right now')
-eq(yDuring.y, liveCard.props.style.top + 40, 'and at its vertical middle')
+eq(yDuring.x, liveCard.props.style.left + Number(liveCard.props.style.width) + 8, 'the line starts at the right edge of where the card is right now')
+eq(yDuring.y, liveCard.props.style.top + Number(liveCard.props.style.height) / 2, 'and at its vertical middle')
 view.window('pointerup', { clientX: 260, clientY: 240 })
 await tick()
 const yAfter = edgeStartXY()
@@ -1007,8 +1015,8 @@ eq(yAfter.x, yDuring.x, 'dropping it does not jump the line somewhere else')
 eq(yAfter.y, yDuring.y, 'nor vertically')
 
 // ── Z. auto-arrange leaves room for the option column ───────────────────────
-// 分歧卡片右边那列选项**也算它占的地方**（184 的卡片 + 14 的间距 + 170 的列 = 368）。
-// 自动排列原来只按卡片宽度让位（184 + 52），选项列于是压在下一层卡片身上（用户报的
+// 分歧卡片右边那列选项**也算它占的地方**（卡片宽 + 14 的间距 + 156 的列）。
+// 自动排列原来只按卡片宽度让位，选项列于是压在下一层卡片身上（用户报的
 // 「自动排列会重叠」）。但让位**不能反过来挪卡片**：上一版把选项列的高度折进卡片的
 // 占位里，卡片在占位里居中，结果同层的分歧卡片比别的卡片低一截（用户报的「默认不居中，
 // 因为计算高度的时候把后面的选项也计算上了」）。现在的规矩：
@@ -1044,7 +1052,7 @@ ok(zN3card.y === zY0, 'adding options never moves the card itself', [zY0, zN3car
 const zNext1 = zPlaces1.filter((p) => p.x === zX && p.y > zN3card.y).sort((a, b) => a.y - b.y)[0]
 ok(zNext1.y > zNext0.y, 'but the card under it is pushed down by the longer option column', [zNext0.y, zNext1.y])
 const gZ = JSON.parse(files[GRAPH])
-const OPT_COL_W = 14 + 170
+const OPT_COL_W = 14 + 156 // 与 src/80-board.js 的 CHOICE_DX + CHOICE_W 对齐
 const footprint = (key) => {
   const node = cardNodeOf(key)
   if (!node) return null
@@ -1077,7 +1085,8 @@ for (let i = 0; i < places.length; i++) {
 }
 eq(overlaps.length, 0, 'no two cards overlap once the option columns are counted', overlaps)
 const zN3 = places.filter((p) => p.key === N3)[0]
-ok(!!zN3 && zN3.w >= 184 + OPT_COL_W, 'the branch node makes room for its option column', zN3 && zN3.w)
+const zN3W = Number(cardNodeOf(N3).props.style.width)
+ok(!!zN3 && zN3.w >= zN3W + OPT_COL_W, 'the branch node makes room for its option column', zN3 && zN3.w)
 // 卡片自己还得落在整数像素上（半像素的圆点看着就不圆）
 ok(places.every((p) => Number.isInteger(p.y)), 'every card still lands on a whole pixel', places.filter((p) => !Number.isInteger(p.y)).map((p) => p.key))
 
@@ -1207,6 +1216,123 @@ await tick()
 const stripNow = view.findAll('sc-tags')[0]
 ok(!!stripNow, 'the strip is still there after the release')
 ok(typeof stripNow.props.onClick === 'function', 'and it swallows the click that follows a drag (sliding must not open a card)')
+
+// ── AE. 展开卡片之后，滚轮归卡片页面 ─────────────────────────────────────────
+// 用户的要求：「点进去卡片之后，滚轮直接接管卡片页面的上滑下滑，不要去管桌布的缩放」。
+console.log('\nAE. wheeling inside an expanded card scrolls it, not the canvas')
+view.click(view.findAll('sc-segb').filter((n) => view.textOf(n) === '分支')[0])
+await tick()
+view.click(view.findAll('sc-navbtn').filter((n) => n.props.title === '回到上级')[0])
+await tick()
+const g1Card = view.findAll('sc-card').filter((n) => n.props['data-key'] === G1)[0]
+view.fire(g1Card, 'onDoubleClick', {})
+await tick()
+const n2Card = view.findAll('sc-card').filter((n) => n.props['data-key'] === N2)[0]
+view.fire(n2Card, 'onDoubleClick', {})
+await wait(60)
+ok(!!view.findMaybe('sc-expand'), 'a card is expanded again')
+const zBefore = atZoom()
+const tBefore = translateOf()
+// 指针落在展开的卡片里：监听器自己判断 target 是不是它的后代
+const insideExpand = { closest: (sel) => (sel === '.sc-expand' ? {} : null) }
+view.el(view.find('sc-canvas'), 'wheel', { deltaY: -120, clientX: 400, clientY: 300, target: insideExpand })
+await tick()
+eq(atZoom(), zBefore, 'the canvas does not zoom while the pointer is over the expanded card')
+eq(translateOf().x, tBefore.x, 'and it does not move sideways either')
+// 指针在卡片外面：滚轮照旧缩放画布（这条证明上面那条不是因为滚轮整个失灵）
+view.el(view.find('sc-canvas'), 'wheel', { deltaY: -120, clientX: 40, clientY: 460, target: blank })
+await tick()
+ok(atZoom() !== zBefore, 'outside the card the wheel still zooms the canvas', atZoom())
+view.click(view.find('sc-expandx'))
+await tick()
+
+// ── AF. 右键框选多张 + 批量操作 ─────────────────────────────────────────────
+// 用户的要求：「加一个右键框选多选的功能，方便批量操作（只在画布上生效）」。
+console.log('\nAF. right-drag marquee selects several cards')
+const toClient = (cx, cy) => {
+  const t = translateOf()
+  const s = atZoom() / 100
+  return { clientX: Math.round(t.x + cx * s), clientY: Math.round(t.y + cy * s) }
+}
+const afA = toClient(-40, -40)
+const afB = toClient(900, 520)
+view.fire(view.find('sc-canvas'), 'onPointerDown', { button: 2, clientX: afA.clientX, clientY: afA.clientY, target: blank })
+view.window('pointermove', { clientX: afB.clientX, clientY: afB.clientY, buttons: 2 })
+await tick()
+const mbox = view.findMaybe('sc-marquee')
+ok(!!mbox, 'dragging with the right button draws a selection box')
+ok(!!mbox && Number(mbox.props.style.width) > 0 && Number(mbox.props.style.height) > 0, 'the box has a real size while you drag', mbox && mbox.props.style)
+view.window('pointerup', { clientX: afB.clientX, clientY: afB.clientY })
+await tick()
+eq(view.findMaybe('sc-marquee'), null, 'the box goes away when you let go')
+const pickedNow = view.findAll('sc-card').filter((n) => String(n.props.className).indexOf(' on') !== -1)
+const pickedKeys = pickedNow.map((n) => n.props['data-key'])
+ok(pickedKeys.length >= 3, 'every card inside the box is selected at once', pickedKeys.length)
+// 框选之后紧跟的右键（真实顺序：pointerup 之后立刻 contextmenu）不该弹菜单
+view.fire(view.find('sc-canvas'), 'onContextMenu', { clientX: afB.clientX, clientY: afB.clientY, target: blank })
+await tick()
+eq(view.findMaybe('sc-menu'), null, 'the right-button release that ended the marquee does not open a menu')
+// 整组一起拖：按住组里任意一张，整组跟着走
+const groupA = view.findAll('sc-card').filter((n) => n.props['data-key'] === pickedKeys[0])[0]
+const posOf = (k) => {
+  const n = view.findAll('sc-card').filter((x) => x.props['data-key'] === k)[0]
+  return n ? { x: Number(n.props.style.left), y: Number(n.props.style.top) } : null
+}
+const beforeDrag = pickedKeys.map((k) => ({ k: k, p: posOf(k) }))
+const startPx = toClient(beforeDrag[0].p.x + 20, beforeDrag[0].p.y + 20)
+// 画布上量到的位移 = 鼠标位移 ÷ 缩放（前面几节把缩放改到过 125%）
+const afScale = atZoom() / 100
+const dxCanvas = Math.round(60 / afScale)
+const dyCanvas = Math.round(40 / afScale)
+view.fire(groupA, 'onPointerDown', { button: 0, clientX: startPx.clientX, clientY: startPx.clientY })
+view.window('pointermove', { clientX: startPx.clientX + 60, clientY: startPx.clientY + 40, buttons: 1 })
+await tick()
+const midDrag = pickedKeys.map((k) => posOf(k))
+eq(midDrag[0].x - beforeDrag[0].p.x, dxCanvas, 'the card you grabbed follows the pointer')
+eq(midDrag[1].x - beforeDrag[1].p.x, dxCanvas, 'and the rest of the group moves with it (same offset)')
+eq(midDrag[1].y - beforeDrag[1].p.y, dyCanvas, 'on both axes')
+view.window('pointerup', { clientX: startPx.clientX + 60, clientY: startPx.clientY + 40 })
+await tick()
+await tick()
+const gAfterDrag = JSON.parse(files[GRAPH])
+const movedKeys = pickedKeys.filter((k, i) => gAfterDrag.nodes[k] && gAfterDrag.nodes[k].cx === beforeDrag[i].p.x + dxCanvas)
+eq(movedKeys.length, pickedKeys.length, 'every group member was written back to the graph file (one write, not one per card)')
+// 右键落在选中组里 → 批量菜单；点「移出画布」整组离开画布
+const groupB = view.findAll('sc-card').filter((n) => n.props['data-key'] === pickedKeys[1])[0]
+const rPos = toClient(beforeDrag[1].p.x + dxCanvas + 20, beforeDrag[1].p.y + dyCanvas + 20)
+view.fire(view.find('sc-canvas'), 'onPointerDown', {
+  button: 2, clientX: rPos.clientX, clientY: rPos.clientY,
+  target: { getAttribute: (a) => (a === 'data-key' ? pickedKeys[1] : null), parentNode: null },
+})
+view.fire(groupB, 'onContextMenu', { clientX: rPos.clientX, clientY: rPos.clientY })
+await tick()
+has(view.text(), '已选 ' + pickedKeys.length + ' 张', 'right-clicking inside the selection gives a batch menu')
+// 批量删除：一个确认框盖住整组（先看一眼再取消，别真删，后面的断言还要用这些卡片）
+const delMany = view.findAll('sc-menuitem').filter((n) => view.textOf(n).indexOf('删除这 ' + pickedKeys.length + ' 张卡片文件') !== -1)[0]
+ok(!!delMany, 'the batch menu can delete the whole selection in one go')
+view.click(delMany)
+await tick()
+const batchDlg = view.findMaybe('sc-modal')
+ok(!!batchDlg, 'a single confirm dialog covers the whole batch')
+has(view.textOf(batchDlg), pickedKeys.length + ' 张卡片文件', 'the dialog says how many files it is about to delete')
+view.click(view.findAll('sc-btn').filter((n) => view.textOf(n) === '取消')[0])
+await tick()
+ok(!view.findMaybe('sc-modal'), 'cancelling it deletes nothing')
+// 再打开一次批量菜单，换成「移出画布」
+view.fire(view.find('sc-canvas'), 'onPointerDown', {
+  button: 2, clientX: rPos.clientX, clientY: rPos.clientY,
+  target: { getAttribute: (a) => (a === 'data-key' ? pickedKeys[1] : null), parentNode: null },
+})
+view.fire(view.findAll('sc-card').filter((n) => n.props['data-key'] === pickedKeys[1])[0], 'onContextMenu', { clientX: rPos.clientX, clientY: rPos.clientY })
+await tick()
+const outMany = view.findAll('sc-menuitem').filter((n) => view.textOf(n).indexOf('移出画布') !== -1)[0]
+ok(!!outMany, 'the batch menu can put the whole selection back in the dock')
+view.click(outMany)
+await tick()
+await tick()
+const gAfterOut = JSON.parse(files[GRAPH])
+eq(pickedKeys.filter((k) => gAfterOut.nodes[k].cx === null).length, pickedKeys.length, 'all of them left the canvas')
+ok(view.findAll('sc-card').filter((n) => String(n.props.className).indexOf(' on') !== -1).length === 0, 'and the selection is cleared')
 
 // 替身自己的 hook 守卫也得是活的，否则「组件被当普通函数调用」这类崩溃在无头测试里
 // 永远看不见 —— 这正是它一路全绿的原因。放在最后跑：它会换掉全局 window。

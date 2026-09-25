@@ -42,11 +42,18 @@ function BoardView(props) {
   const [ghost, setGhost] = React.useState(null)
   const [panOn, setPanOn] = React.useState(false)
   const [fav, setFav] = React.useState(readFav)
+  // 框选（只在画布上生效）：右键拖出一个框，框里的卡片一起选中，方便批量操作。
+  // multi = 被框中的卡片键；marquee = 拖动中那个框（画布坐标）。
+  const [multi, setMulti] = React.useState([])
+  const [marquee, setMarquee] = React.useState(null)
 
   const canvasRef = React.useRef(null)
   const clipRef = React.useRef(null)
   const dragRef = React.useRef(null)
   const linkRef = React.useRef(null)
+  const marqueeRef = React.useRef(null)
+  // 刚框选完的那一下右键不能弹菜单（Windows 上 contextmenu 有时在 mouseup 之后才派发）
+  const justMarqueed = React.useRef(false)
   const clip = React.useRef(null)
   clip.current = props.clipboard || null
 
@@ -68,7 +75,8 @@ function BoardView(props) {
   function liveRect(k) {
     const r = rects[k]
     if (!r) return r
-    if (drag && drag.key === k) return { x: drag.x, y: drag.y, w: r.w, h: r.h, placed: r.placed }
+    if (drag && drag.pos && drag.pos[k]) return { x: drag.pos[k].x, y: drag.pos[k].y, w: r.w, h: r.h, placed: r.placed }
+    if (drag && drag.key === k && !drag.pos) return { x: drag.x, y: drag.y, w: r.w, h: r.h, placed: r.placed }
     return r
   }
 
@@ -78,10 +86,11 @@ function BoardView(props) {
     setHist(next)
     setHi(next.length - 1)
     setSel(null)
+    setMulti([])
     closeExpand()
   }
-  function back() { if (hi > 0) { setHi(hi - 1); setSel(null); closeExpand() } }
-  function fwd() { if (hi < hist.length - 1) { setHi(hi + 1); setSel(null); closeExpand() } }
+  function back() { if (hi > 0) { setHi(hi - 1); setSel(null); setMulti([]); closeExpand() } }
+  function fwd() { if (hi < hist.length - 1) { setHi(hi + 1); setSel(null); setMulti([]); closeExpand() } }
   function home() { if (here.level !== 'root') go({ level: 'root' }) }
 
   // ── 当前层级的卡片 ─────────────────────────────────────────────────────────
@@ -111,27 +120,45 @@ function BoardView(props) {
 
   // ── 写回图谱 ───────────────────────────────────────────────────────────────
   function patchRec(key, fields) {
+    patchMany([key], fields)
+  }
+
+  /** 一次给多张卡片写同一个字段（批量染色走它）。同 placeMany：只写一次图谱。 */
+  function patchMany(keys, fields) {
+    if (!keys || !keys.length) return
     const next = {
       version: 1,
       chapters: graph.chapters.slice(),
       nodes: Object.assign({}, graph.nodes),
       edges: graph.edges.slice(),
     }
-    const old = next.nodes[key] || { x: null, y: null, cx: null, cy: null, chapter: '', mode: '', color: '', choices: [] }
-    next.nodes[key] = Object.assign({}, old, fields)
+    for (const key of keys) {
+      const old = next.nodes[key] || { x: null, y: null, cx: null, cy: null, chapter: '', mode: '', color: '', choices: [] }
+      next.nodes[key] = Object.assign({}, old, fields)
+    }
     props.onGraph(next)
   }
 
   function placeAt(key, x, y) {
-    if (level === 'root') patchRec(key, { x: x, y: y })
-    else {
-      const next = {
-        version: 1, chapters: graph.chapters.slice(), nodes: Object.assign({}, graph.nodes), edges: graph.edges.slice(),
-      }
-      const old = next.nodes[key] || { x: null, y: null, cx: null, cy: null, chapter: '', mode: '', color: '', choices: [] }
-      next.nodes[key] = Object.assign({}, old, { cx: x, cy: y, chapter: here.key })
-      props.onGraph(next)
+    placeMany([{ key: key, x: x, y: y }])
+  }
+
+  /**
+   * 一次写回多张卡片的位置。**不能**逐张调 placeAt：每次都从这份还没更新的 graph 起算，
+   * 后一次会把前一次的位置覆盖掉 —— 整组拖动时看起来只有最后一张动了。
+   */
+  function placeMany(list) {
+    if (!list || !list.length) return
+    const next = {
+      version: 1, chapters: graph.chapters.slice(), nodes: Object.assign({}, graph.nodes), edges: graph.edges.slice(),
     }
+    for (const it of list) {
+      const old = next.nodes[it.key] || { x: null, y: null, cx: null, cy: null, chapter: '', mode: '', color: '', choices: [] }
+      next.nodes[it.key] = level === 'root'
+        ? Object.assign({}, old, { x: it.x, y: it.y })
+        : Object.assign({}, old, { cx: it.x, cy: it.y, chapter: here.key })
+    }
+    props.onGraph(next)
   }
 
   function addEdge(from, to, choice) {
@@ -189,8 +216,11 @@ function BoardView(props) {
     if (!r) return
     const box = canvasBox()
     const s = view.s
-    const tx = box.width / 2 - (r.x + r.w / 2) * s
-    const ty = box.height / 2 - (r.y + r.h / 2) * s
+    // 取整：画的时候 .sc-stage 的 translate 本来就要 round 到整像素，state 里留着小数的话，
+    // 「按 state 算出来的坐标」和「屏幕上真正画的位置」会差最多半个像素 —— 命中测试、
+    // 连线起笔点、几何断言全都会被这半个像素咬到。
+    const tx = Math.round(box.width / 2 - (r.x + r.w / 2) * s)
+    const ty = Math.round(box.height / 2 - (r.y + r.h / 2) * s)
     const from = { left: box.width / 2 - (r.w * s) / 2, top: box.height / 2 - (r.h * s) / 2, width: r.w * s, height: r.h * s }
     const to = { left: box.width / 2 - EXPAND_W / 2, top: box.height / 2 - EXPAND_H / 2, width: EXPAND_W, height: EXPAND_H }
     setSel(k)
@@ -214,11 +244,15 @@ function BoardView(props) {
     const k = cardKey(card)
     const r = rects[k]
     if (!r) return
+    // 点到框选之外的一张：那一组就散掉（跟大多数桌面软件一致）
+    if (multi.length && multi.indexOf(k) === -1) setMulti([])
     setSel(k)
     if (!r.placed) return
     const start = toCanvas(e.clientX, e.clientY)
-    dragRef.current = { key: k, dx: start.x - r.x, dy: start.y - r.y, x: r.x, y: r.y, moved: false }
-    setDrag({ key: k, x: r.x, y: r.y })
+    // 按在选中集合里的任何一张上，整组一起走 —— 框选之后最想要的批量操作就是这个。
+    const group = (multi.length > 1 && multi.indexOf(k) !== -1) ? multi.slice() : [k]
+    dragRef.current = { key: k, dx: start.x - r.x, dy: start.y - r.y, x: r.x, y: r.y, moved: false, group: group, pos: null }
+    setDrag({ key: k, x: r.x, y: r.y, pos: null })
     if (e.currentTarget && typeof e.currentTarget.setPointerCapture === 'function' && e.pointerId !== undefined) {
       try { e.currentTarget.setPointerCapture(e.pointerId) } catch (err) { /* 忽略 */ }
     }
@@ -229,6 +263,22 @@ function BoardView(props) {
   // 而 pointerup 是紧接着派发的 —— 此时闭包里的 `drag` 还是松手前那一帧的值，
   // 于是卡片被写回原位，看起来就是「拖了没写」。ref 永远是刚算出来的那个坐标。
   function movePointers(e) {
+    if (marqueeRef.current) {
+      const m = marqueeRef.current
+      // 右键已经松开了还在动鼠标（比如中途 pointerup 丢了）就别再画框
+      if (e.buttons !== undefined && (e.buttons & 2) === 0) { marqueeRef.current = null; setMarquee(null); return }
+      const p = toCanvas(e.clientX, e.clientY)
+      if (Math.abs(p.x - m.ox) > 3 || Math.abs(p.y - m.oy) > 3) m.moved = true
+      m.x = p.x
+      m.y = p.y
+      if (m.moved) {
+        // 拖出框来就不是「右键点一下」了：把可能已经弹出的菜单收掉
+        setMenu(null)
+        setEdgeMenu(null)
+        setMarquee({ x: Math.min(m.ox, m.x), y: Math.min(m.oy, m.y), w: Math.abs(m.x - m.ox), h: Math.abs(m.y - m.oy) })
+      }
+      return
+    }
     if (dragRef.current) {
       const d = dragRef.current
       const p = toCanvas(e.clientX, e.clientY)
@@ -237,7 +287,21 @@ function BoardView(props) {
       d.moved = true
       d.x = x
       d.y = y
-      setDrag({ key: d.key, x: x, y: y })
+      if (d.group && d.group.length > 1) {
+        // 整组跟着走：每张相对被拖那张的偏移固定不变
+        const base = rects[d.key]
+        const pos = {}
+        d.group.forEach(function (gk) {
+          const gr = rects[gk]
+          if (!gr || !base) return
+          pos[gk] = { x: Math.round(x + (gr.x - base.x)), y: Math.round(y + (gr.y - base.y)) }
+        })
+        d.pos = pos
+        setDrag({ key: d.key, x: x, y: y, pos: pos })
+      } else {
+        d.pos = null
+        setDrag({ key: d.key, x: x, y: y, pos: null })
+      }
       return
     }
     if (linkRef.current) {
@@ -256,10 +320,35 @@ function BoardView(props) {
   }
 
   function upPointers(e) {
+    if (marqueeRef.current) {
+      const m = marqueeRef.current
+      marqueeRef.current = null
+      setMarquee(null)
+      if (!m.moved) return
+      justMarqueed.current = true
+      const box = { x: Math.min(m.ox, m.x), y: Math.min(m.oy, m.y), w: Math.abs(m.x - m.ox), h: Math.abs(m.y - m.oy) }
+      const hit = []
+      scope.forEach(function (c) {
+        const k = cardKey(c)
+        const r = rects[k]
+        if (!r || !r.placed) return
+        if (r.x < box.x + box.w && r.x + r.w > box.x && r.y < box.y + box.h && r.y + r.h > box.y) hit.push(k)
+      })
+      setMulti(hit)
+      if (hit.length) setSel(hit[0])
+      return
+    }
     if (dragRef.current) {
       const d = dragRef.current
       dragRef.current = null
-      if (d.moved) placeAt(d.key, d.x, d.y)
+      if (d.moved) {
+        if (d.pos) {
+          const list = Object.keys(d.pos).map(function (gk) { return { key: gk, x: d.pos[gk].x, y: d.pos[gk].y } })
+          placeMany(list)
+        } else {
+          placeAt(d.key, d.x, d.y)
+        }
+      }
       setDrag(null)
       return
     }
@@ -357,7 +446,17 @@ function BoardView(props) {
     // 连线标签和连线本身也算「不是空白」：点标签是改名字，不是取消选中 + 拖画布。
     const onEdge = !!(e.target && typeof e.target.getAttribute === 'function' && e.target.getAttribute('data-edge'))
     const blank = !keyUnder(e.target) && !onEdge && !expand
-    if (e.button === 0 && blank) setSel(null)
+    // 右键拖 = 框选多张（画布上才有；展开卡片时不介入）。
+    // 右键**没有**拖动的那一下仍然照旧弹菜单。
+    if (e.button === 2 && !expand) {
+      const p = toCanvas(e.clientX, e.clientY)
+      marqueeRef.current = { ox: p.x, oy: p.y, x: p.x, y: p.y, moved: false }
+      justMarqueed.current = false
+      setMenu(null)
+      setEdgeMenu(null)
+      return
+    }
+    if (e.button === 0 && blank) { setSel(null); setMulti([]) }
     if (e.button === 1 || (e.button === 0 && blank)) {
       panRef.current = { px: e.clientX, py: e.clientY, vx: view.x, vy: view.y, s: view.s }
       setPanOn(true)
@@ -366,6 +465,11 @@ function BoardView(props) {
   }
 
   function onWheel(e) {
+    // 展开的卡片是一页可以上下滚的内容：指针落在它里面时滚轮归它 —— 既不缩放画布，
+    // 也不能 preventDefault（拦下默认行为它就滚不动了）。用户的要求：
+    // 「点进去卡片之后，滚轮直接接管卡片页面的上滑下滑，不要去管桌布的缩放」。
+    const t = e && e.target
+    if (t && typeof t.closest === 'function' && t.closest('.sc-expand')) return
     e.preventDefault()
     // deltaX/deltaY 偶尔缺失（合成事件、老浏览器），缺了就当 0 —— 否则 view 里
     // 会混进 NaN，整块画布跟着一起废掉。
@@ -384,7 +488,12 @@ function BoardView(props) {
     const box = canvasBox()
     const px = e.clientX - box.left
     const py = e.clientY - box.top
-    setView({ x: px - ((px - view.x) / view.s) * s2, y: py - ((py - view.y) / view.s) * s2, s: s2 })
+    // 同上：state 与屏幕上的整像素保持一份，别留小数
+    setView({
+      x: Math.round(px - ((px - view.x) / view.s) * s2),
+      y: Math.round(py - ((py - view.y) / view.s) * s2),
+      s: s2,
+    })
   }
 
   // ── 连线的名字 ─────────────────────────────────────────────────────────────
@@ -537,26 +646,42 @@ function BoardView(props) {
       if (matchKey(e, 'mod+v')) { e.preventDefault(); pasteAt(null); return }
       if (matchKey(e, 'mod+d') && cur) { e.preventDefault(); props.onDuplicate(cur); return }
       if (matchKey(e, 'space') && cur) { e.preventDefault(); if (expand && expand.key === sel) closeExpand(); else openExpand(cur); return }
-      if (matchKey(e, 'delete') && cur) { e.preventDefault(); removeFromCanvas(cur); return }
+      if (matchKey(e, 'delete') && cur) {
+        e.preventDefault()
+        // 框选了一组就整组移出画布（文件不动），否则只动当前这张
+        if (multi.length > 1) removeManyFromCanvas(multi)
+        else removeFromCanvas(cur)
+        return
+      }
       if (matchKey(e, 'mod+0')) { e.preventDefault(); setView({ x: 24, y: 20, s: 1 }); return }
       if (matchKey(e, 'mod+1')) { e.preventDefault(); setView({ x: view.x, y: view.y, s: 1 }); return }
-      if (matchKey(e, 'esc')) { if (expand) closeExpand(); else setMenu(null); return }
-      if (matchKey(e, 'mod+a')) { e.preventDefault(); return }
+      if (matchKey(e, 'esc')) { if (expand) closeExpand(); else { setMenu(null); setMulti([]) } return }
+      if (matchKey(e, 'mod+a')) { e.preventDefault(); setMulti(placed.map(cardKey)); return }
     }
     window.addEventListener('keydown', onKey)
     return function () { window.removeEventListener('keydown', onKey) }
   })
 
   function removeFromCanvas(card) {
-    const k = cardKey(card)
+    removeManyFromCanvas([cardKey(card)])
+  }
+
+  /** 一次把多张卡片移出画布（文件不动）。同 placeMany：只写一次图谱。 */
+  function removeManyFromCanvas(keys) {
+    if (!keys || !keys.length) return
+    const set = {}
+    keys.forEach(function (k) { set[k] = true })
     const next = {
-      version: 1, chapters: graph.chapters.filter(function (x) { return x !== k }),
+      version: 1, chapters: graph.chapters.filter(function (x) { return !set[x] }),
       nodes: Object.assign({}, graph.nodes), edges: graph.edges.slice(),
     }
-    if (level === 'root') next.nodes[k] = Object.assign({}, next.nodes[k] || {}, { x: null, y: null })
-    else next.nodes[k] = Object.assign({}, next.nodes[k] || {}, { cx: null, cy: null })
-    next.edges = next.edges.filter(function (e) { return e.from !== k && e.to !== k })
+    for (const k of keys) {
+      if (level === 'root') next.nodes[k] = Object.assign({}, next.nodes[k] || {}, { x: null, y: null })
+      else next.nodes[k] = Object.assign({}, next.nodes[k] || {}, { cx: null, cy: null })
+    }
+    next.edges = next.edges.filter(function (e) { return !set[e.from] && !set[e.to] })
     props.onGraph(next)
+    setMulti([])
   }
 
   function pasteAt(point) {
@@ -639,10 +764,31 @@ function BoardView(props) {
     return items
   }
 
+  // 框选出一组之后的批量菜单：只做「一次操作多张」的事，单张编辑留给卡片自己的菜单。
+  function batchMenuItems(keys) {
+    const n = keys.length
+    return [
+      { head: '已选 ' + n + ' 张（右键拖框选）' },
+      { key: 'out', label: '移出画布', hint: 'Delete', onPick: function () { removeManyFromCanvas(keys) } },
+      { sep: true },
+      { head: '染色' },
+      { key: 'color', colors: true },
+      { sep: true },
+      { key: 'selectall', label: '选中这一层全部', onPick: function () { setMulti(placed.map(cardKey)) } },
+      { key: 'del', label: '删除这 ' + n + ' 张卡片文件…', danger: true, onPick: function () { props.onDeleteCards(keys) } },
+      { key: 'clr', label: '取消选择', onPick: function () { setMulti([]); setSel(null) } },
+    ]
+  }
+
   const menuPoint = React.useRef({ x: 40, y: 40 })
 
   function onCanvasMenu(e) {
     e.preventDefault()
+    // 框选的收尾不是「打开菜单」：拖出过框（或刚拖完）就把这一下右键吃掉。
+    if ((marqueeRef.current && marqueeRef.current.moved) || justMarqueed.current) {
+      justMarqueed.current = false
+      return
+    }
     if (e.target !== e.currentTarget && !(e.target.classList && e.target.classList.contains('sc-stage'))) {
       // 点在卡片上时由卡片的 onContextMenu 处理
     }
@@ -653,8 +799,17 @@ function BoardView(props) {
   }
 
   function onCardMenu(e, card) {
-    setSel(cardKey(card))
     setEdgeMenu(null)
+    if (justMarqueed.current) { justMarqueed.current = false; return }
+    const k = cardKey(card)
+    // 右键落在框选出来的那一组里 → 给批量菜单，别再只操作一张
+    if (multi.length > 1 && multi.indexOf(k) !== -1) {
+      setSel(k)
+      setMenu({ x: e.clientX, y: e.clientY, card: null, batch: multi.slice() })
+      return
+    }
+    setSel(k)
+    setMulti([])
     setMenu({ x: e.clientX, y: e.clientY, card: card })
   }
 
@@ -755,12 +910,12 @@ function BoardView(props) {
     const k = cardKey(c)
     const r = rects[k]
     if (!r.placed) return null
-    const shown = drag && drag.key === k ? { x: drag.x, y: drag.y, w: r.w, h: r.h } : r
+    const shown = liveRect(k)
     const rec = nodeRec(graph, k)
     const isExpanding = expand && expand.key === k
     return React.createElement(CardView, {
       key: k, card: c, rec: rec, rect: shown, cardKey: k,
-      selected: sel === k,
+      selected: sel === k || multi.indexOf(k) !== -1,
       dimmed: !!expand && !isExpanding,
       expanded: !!isExpanding,
       childNodes: c.type === 'chapter' ? nodesOfChapter(cards, graph, k) : [],
@@ -916,7 +1071,12 @@ function BoardView(props) {
         // 连线标签是 HTML（见上面的注释）：挂在 .sc-stage 里，画布坐标直接当 left/top 用，
         // 跟着整块画布一起平移缩放。
         edgeLabels,
-        cardEls
+        cardEls,
+        // 框选的框：画布坐标，跟着画布一起缩放；只画个虚线框，不挡任何点击
+        marquee ? React.createElement('div', {
+          className: 'sc-marquee',
+          style: { left: marquee.x, top: marquee.y, width: marquee.w, height: marquee.h },
+        }) : null
       ),
       scrim,
       overlay,
@@ -937,6 +1097,7 @@ function BoardView(props) {
       React.createElement('span', null, '· 空白处左键拖动平移 · 滚轮缩放（Shift/Alt+滚轮左右上下）'),
       React.createElement('span', null, '· 右键空白处新建 / 粘贴'),
       React.createElement('span', null, '· 点连线给它起名字（右键改名 / 删线）'),
+      React.createElement('span', null, '· 右键拖框选多张（右键点一下仍是菜单 · Ctrl+A 全选）'),
       React.createElement('span', { className: 'sp' }),
       React.createElement('button', {
         className: 'sc-btn', title: '按连线分层，同层再按时间排',
@@ -961,20 +1122,28 @@ function BoardView(props) {
       onColor: function () {},
       onClose: function () { setEdgeMenu(null) },
     }) : null,
-    menu ? (menu.card
+    menu ? (menu.batch
       ? MenuList({
-        x: menu.x, y: menu.y, items: menuItems(menu.card),
-        color: nodeRec(graph, cardKey(menu.card)).color || menu.card.color || '',
-        swatches: props.swatches, onEditSwatches: props.onEditSwatches,
-        onColor: function (v) { patchRec(cardKey(menu.card), { color: v }); setMenu(null) },
-        onClose: function () { setMenu(null) },
-      })
-      : MenuList({
-        x: menu.x, y: menu.y, items: emptyMenuItems(),
+        x: menu.x, y: menu.y, items: batchMenuItems(menu.batch),
         color: '',
         swatches: props.swatches, onEditSwatches: props.onEditSwatches,
-        onColor: function () {},
+        onColor: function (v) { patchMany(menu.batch, { color: v }); setMenu(null) },
         onClose: function () { setMenu(null) },
-      })) : null
+      })
+      : (menu.card
+        ? MenuList({
+          x: menu.x, y: menu.y, items: menuItems(menu.card),
+          color: nodeRec(graph, cardKey(menu.card)).color || menu.card.color || '',
+          swatches: props.swatches, onEditSwatches: props.onEditSwatches,
+          onColor: function (v) { patchRec(cardKey(menu.card), { color: v }); setMenu(null) },
+          onClose: function () { setMenu(null) },
+        })
+        : MenuList({
+          x: menu.x, y: menu.y, items: emptyMenuItems(),
+          color: '',
+          swatches: props.swatches, onEditSwatches: props.onEditSwatches,
+          onColor: function () {},
+          onClose: function () { setMenu(null) },
+        }))) : null
   )
 }

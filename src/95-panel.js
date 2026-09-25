@@ -217,6 +217,33 @@ function CardsPanel(props) {
     })
   }
 
+  // 画布上框选出一组之后的批量删除：确认一次，删完只写一次图谱。
+  function deleteCards(keys) {
+    const want = {}
+    keys.forEach(function (k) { want[k] = true })
+    const list = cards.filter(function (c) { return want[cardKey(c)] })
+    if (!list.length) return
+    setDialog({
+      kind: 'confirm', title: '删除这 ' + list.length + ' 张卡片文件？',
+      text: '会真的删掉 ' + list.map(function (c) { return c.file }).join('、') + '。删掉之后画布上对应的记录也会一起清掉。',
+      okLabel: '删除',
+      onOk: function () {
+        setDialog(null)
+        Promise.all(list.map(function (c) { return api.deleteCard(cwd, c.kind, c.file) })).then(function () {
+          setCards(cards.filter(function (c) { return !want[cardKey(c)] }))
+          const next = {
+            version: 1, chapters: graph.chapters.filter(function (k) { return !want[k] }),
+            nodes: Object.assign({}, graph.nodes), edges: graph.edges.slice(),
+          }
+          for (const k of Object.keys(want)) delete next.nodes[k]
+          next.edges = next.edges.filter(function (e) { return !want[e.from] && !want[e.to] })
+          saveGraph(next)
+          pushNotice({ text: '已删除 ' + list.length + ' 张卡片', kind: 'info' })
+        }).catch(function (e) { pushNotice('删除失败：' + msgOf(e)) })
+      },
+    })
+  }
+
   function retype(card, type) {
     const text = renderFront({
       id: card.id, type: type, title: card.title, code: card.code, chapter: card.chapter,
@@ -312,6 +339,7 @@ function CardsPanel(props) {
       onOpenCard: function (c) { setSel(cardKey(c)); setDialog({ kind: 'edit', card: c }) },
       onEditCard: function (c) { setDialog({ kind: 'edit', card: c }) },
       onDeleteCard: deleteCard,
+      onDeleteCards: deleteCards,
       onDuplicate: duplicateCard,
       onRetype: retype,
       onNewCard: newCardAt,
