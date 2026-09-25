@@ -17,6 +17,12 @@ function sameDeps(a, b) {
   return true
 }
 
+function sameList(a, b) {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
+  return true
+}
+
 function childList(ch) {
   if (ch === undefined || ch === null) return []
   return Array.isArray(ch) ? ch : [ch]
@@ -40,8 +46,17 @@ export function createHarness() {
   // 元素级监听器（插件里用 ref + addEventListener 挂的那些，比如非 passive 的 wheel），
   // 按渲染路径存 —— ref 每次渲染都会拿到一个新的壳，监听器不能挂在壳上。
   const elListeners = new Map()
+  // 假元素的滚动尺寸：标签条那种横向滚动容器要读 scrollWidth / clientWidth / scrollLeft。
+  // 按渲染路径存，测试可以 view.scrollBox(node) 拿到它、预置尺寸，再断言拖动之后的 scrollLeft。
+  const scrollBoxes = new Map()
   const created = []
   let storage = {}
+
+  function scrollBoxOf(p) {
+    let b = scrollBoxes.get(p)
+    if (!b) { b = { scrollLeft: 0, scrollWidth: 0, clientWidth: 0 }; scrollBoxes.set(p, b) }
+    return b
+  }
 
   // ── React surface ────────────────────────────────────────────────────────
   function createElement(type, props) {
@@ -54,8 +69,19 @@ export function createHarness() {
     return { $$: true, type: type, props: p }
   }
 
-  function useState(init) {
+  // 真 React 的一条硬规则：同一个组件每次渲染调用的 hook **顺序和数量都必须一样**。
+  // 这里边调边记，渲染结束时跟上一轮对比（见 walk）。它把「把组件当普通函数调用」这种
+  // 写法变成可见的 bug —— 被调用组件的 hook 会算到调用者头上，调用点一多一少就崩，
+  // 而旧版替身完全不检查，于是真机上「点卡片整个面板就崩」在这套测试里一路全绿。
+  function hook(kind) {
     const inst = current
+    if (!inst) throw new Error('hook (' + kind + ') 不在组件渲染里被调用')
+    inst.types.push(kind)
+    return inst
+  }
+
+  function useState(init) {
+    const inst = hook('useState')
     const i = inst.idx++
     if (inst.hooks.length <= i) inst.hooks[i] = { v: typeof init === 'function' ? init() : init }
     const slot = inst.hooks[i]
@@ -67,14 +93,14 @@ export function createHarness() {
   }
 
   function useRef(init) {
-    const inst = current
+    const inst = hook('useRef')
     const i = inst.idx++
     if (inst.hooks.length <= i) inst.hooks[i] = { r: { current: init === undefined ? null : init } }
     return inst.hooks[i].r
   }
 
   function useEffect(fn, deps) {
-    const inst = current
+    const inst = hook('useEffect')
     const i = inst.idx++
     if (inst.hooks.length <= i) inst.hooks[i] = { deps: undefined, cleanup: undefined, fn: fn, pending: false }
     const slot = inst.hooks[i]
@@ -98,10 +124,15 @@ export function createHarness() {
   function fakeEl(node) {
     let map = elListeners.get(node.path)
     if (!map) { map = new Map(); elListeners.set(node.path, map) }
+    const box = scrollBoxOf(node.path)
     return {
       __host: node,
       getBoundingClientRect: function () { return node.rect },
       style: node.props.style || {},
+      get scrollLeft() { return box.scrollLeft },
+      set scrollLeft(v) { box.scrollLeft = Number(v) || 0 },
+      get scrollWidth() { return box.scrollWidth },
+      get clientWidth() { return box.clientWidth },
       addEventListener: function (type, fn) {
         if (!map.has(type)) map.set(type, [])
         map.get(type).push(fn)
@@ -119,7 +150,7 @@ export function createHarness() {
     visited.add(path)
     let inst = instances.get(path)
     if (!inst || inst.type !== type) {
-      inst = { type: type, hooks: [], idx: 0, path: path }
+      inst = { type: type, hooks: [], idx: 0, path: path, types: [], lastTypes: null }
       instances.set(path, inst)
     }
     return inst
@@ -201,12 +232,22 @@ export function createHarness() {
       const prev = current
       current = inst
       inst.idx = 0
+      inst.types = []
       let rendered
       try {
         rendered = type(props)
       } finally {
         current = prev
       }
+      // 顺序或数量跟上一轮不一样就抛 —— 与真 React 同一套判据。
+      // （真 React 在「这次比上次多」时无条件抛 "Rendered more hooks than during the
+      // previous render."，「少」是 dev 下的报错；本替身两种都当错。用真 React 18.3.1
+      // 验证过：把组件当普通函数调用、调用次数随数据变化，第二次渲染就抛。）
+      if (inst.lastTypes && !sameList(inst.lastTypes, inst.types)) {
+        throw new Error('hook 顺序/数量变了：<' + (type.name || 'anonymous') + '> at ' + path +
+          '\n  上一次 [' + inst.lastTypes.join(', ') + ']\n  这一次 [' + inst.types.join(', ') + ']')
+      }
+      inst.lastTypes = inst.types
       // 组件的输出必须换一条子路径。否则「包装组件 → 真组件」这种嵌套会让
       // 两者抢同一个 path，getInstance 看到 type 不匹配就每次都新建实例，
       // hook 状态（含 useEffect 的 deps）全部丢失 —— 表现为无限重渲染。
@@ -394,6 +435,8 @@ export function createHarness() {
       renderCount: function () { return renderCount },
       defer: function (on) { defer = !!on },
       flush: function () { if (dirty) renderNow() },
+      // 预置/读取某个元素的滚动尺寸（标签条的拖动靠它断言）
+      scrollBox: function (node) { return scrollBoxOf(node.path) },
     }
   }
 

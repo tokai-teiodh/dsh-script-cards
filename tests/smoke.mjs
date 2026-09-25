@@ -227,6 +227,12 @@ ok(view.findAll('sc-tags').length >= 1, 'tiles have a tag strip')
 const tile0 = view.findAll('sc-tile')[0]
 view.click(tile0)
 await tick()
+// 这一条同时守着一次真机崩溃：组件被当普通函数调用时，它的 hook 会算到**调用者**头上，
+// 选中卡片让「详情」那几个 hook 多出来，真 React 直接抛
+// "Rendered more hooks than during the previous render" —— 整个面板当场白掉，
+// 用户报的就是这个（「在主页拖动选中文本，插件整个崩溃，什么东西都选不出来」）。
+ok(!!view.findMaybe('sc-h1'), 'clicking a card opens its detail (the render that used to blow the panel up)')
+ok(view.textOf(view.find('sc-detail')).indexOf('选一张卡片看正文') === -1, 'and the detail pane really switched to that card')
 view.click(view.findAll('sc-icon')[0])
 await tick()
 const stored = JSON.parse(h.storage()['dsh-script-cards:state'] || '{}')
@@ -773,6 +779,24 @@ has(rule('.sc-tags::-webkit-scrollbar-button'), 'display:none', 'no arrow button
 ok(tagsRule.indexOf('scrollbar-width:thin') === -1, 'it no longer reserves space for a scrollbar it does not show', tagsRule)
 has(rule('.sc-tagbar'), 'position:absolute', 'the bar shown while scrolling is an overlay — showing it shifts nothing')
 eq(rule('.sc-tags:hover'), '', 'the strip has no hover rule any more (that is what used to jitter)')
+// 原生滚动条藏掉之后，鼠标就抓不到那根滑块了，所以标签条自己得能按住横拖
+// （用户报的「滑动功能整个没用了」）；拖动时标签文字不可选中，不然一拖就变成拖选文字。
+has(tagsRule, 'cursor:grab', 'the strip says it can be dragged sideways')
+has(tagsRule, 'user-select:none', 'dragging the strip cannot turn into selecting tag text')
+has(rule('.sc-group,.sc-grid,.sc-tile,.sc-tiletitle,.sc-tilesum'), 'user-select:none', 'the whole grid page is unselectable (that drag was what crashed the panel)')
+// 连线上那个输入框的层级：DOM 上它在卡片前面，线中点又常落在卡片底下，
+// 不给它抬起来就只露半个（用户报的「输入框图层在最底下，看不全」）。
+const zOf = (sel) => Number((rule(sel).match(/z-index:(\d+)/) || [])[1])
+ok(zOf('.sc-elabel') > 0, 'an edge label paints above the cards (they carry no z-index at all)', zOf('.sc-elabel'))
+ok(zOf('.sc-elabel') > zOf('.sc-choices'), 'and above the option column', [zOf('.sc-elabel'), zOf('.sc-choices')])
+ok(zOf('.sc-elabeledit') >= zOf('.sc-elabel'), 'the input you type into sits on top of the label it replaces', [zOf('.sc-elabeledit'), zOf('.sc-elabel')])
+ok(zOf('.sc-elabel') < zOf('.sc-expand'), 'but still below the expanded card', [zOf('.sc-elabel'), zOf('.sc-expand')])
+// 组件不许当普通函数调用：那样它的 hook 会记到调用者头上，调用点的数量一变，真 React
+// 就抛 "Rendered more hooks than during the previous render"，整个面板当场白掉。
+// （替身现在也照着这条判据抛错，这里再把源码钉一遍。）
+const bundle = fs.readFileSync(CLIENT, 'utf8')
+const plainCalls = ['TagRow', 'Tile', 'ArchiveDetail', 'CardBody'].filter((n) => bundle.indexOf(n + '({') !== -1)
+eq(plainCalls.join(','), '', 'no hook-bearing component is invoked as a plain function')
 // 连线必须是看得见的颜色：--dsw-alias-border-l2 是 12% 白，画成线等于全透明。
 const edgeRule = rule('.sc-edge')
 has(edgeRule, 'stroke:var(--dsw-alias-label-secondary)', 'edges use the secondary label colour, not a 12%-alpha border colour')
@@ -1163,6 +1187,44 @@ eq(thumb && thumb.props.style.left, '37.5%', 'scrolled halfway puts the middle o
 // 停手 700ms 之后自己消失（这里多等 80ms 免得定时器边界抖动）
 await wait(780)
 eq(view.findMaybe('sc-tagbar'), null, 'and it goes away again shortly after the scrolling stops')
+
+// ── AC. 标签条能按住横拖 ─────────────────────────────────────────────────────
+// 用户报的：「主页面的滑条没了，但是滑动功能整个没用了」——原生的滑块藏掉之后，
+// 鼠标就再也抓不到它，所以只能自己实现「按住标签条横着拖」。
+console.log('\nAC. the tag strip can be dragged sideways')
+const strip2 = view.findAll('sc-tags')[0]
+const box = view.scrollBox(strip2)
+box.scrollWidth = 400
+box.clientWidth = 100
+box.scrollLeft = 150
+view.el(strip2, 'pointerdown', { clientX: 200 })
+view.window('pointermove', { clientX: 150 })
+await tick()
+eq(box.scrollLeft, 200, 'dragging 50px left scrolls the strip 50px right')
+ok(!!view.findMaybe('sc-tagbar'), 'and the bar stays up while your hand is still down')
+view.window('pointerup', {})
+await tick()
+const stripNow = view.findAll('sc-tags')[0]
+ok(!!stripNow, 'the strip is still there after the release')
+ok(typeof stripNow.props.onClick === 'function', 'and it swallows the click that follows a drag (sliding must not open a card)')
+
+// 替身自己的 hook 守卫也得是活的，否则「组件被当普通函数调用」这类崩溃在无头测试里
+// 永远看不见 —— 这正是它一路全绿的原因。放在最后跑：它会换掉全局 window。
+console.log('\nAD. the harness refuses a component whose hook count changes')
+const guard = createHarness()
+guard.installGlobals({})
+function Guarded(props) {
+  if (props.extra) guard.React.useState(0)
+  return guard.React.createElement('div', null, 'x')
+}
+guard.mount(guard.React.createElement(Guarded, { extra: false }))
+let guardFired = false
+try {
+  guard.mount(guard.React.createElement(Guarded, { extra: true }))
+} catch (e) {
+  guardFired = String(e && e.message).indexOf('hook 顺序') !== -1
+}
+ok(guardFired, 'the harness throws when a component calls a different number of hooks (same rule as real React)')
 
 console.log('\n' + (failures === 0 ? 'ALL GREEN' : 'FAILURES: ' + failures) + '  (' + checks + ' checks, ' + view.renderCount() + ' renders)')
 if (failures !== 0) process.exit(1)

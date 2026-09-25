@@ -68,14 +68,22 @@ const CSS = `
    Windows 的原生滚动条带两侧三角箭头，很丑，所以整个藏掉、也不占位；
    「悬停才显示」那种写法又会「悬停改尺寸」——滑块一出现就把标签顶走，指针落回原处又取消
    悬停，来回抖，网格跟着跳（侧栏一抖，对话列跟着换行，看起来就是「主界面的对话框莫名
-   上下跳动」）。现在自己画的那根是绝对定位的，出现或消失都不挪动任何东西。 */
+   上下跳动」）。现在自己画的那根是绝对定位的，出现或消失都不挪动任何东西。
+   滚动条藏掉之后就抓不到滑块了，所以标签条自己支持按住横拖（见 60-grid.js），
+   拖动时文字不许被选中 —— 否则一拖就变成拖选文字，插件会跟着报错（用户报的
+   「主页面的滑条没了，滑动功能整个没用了」「拖动选中文本就崩溃」）。 */
 .sc-tagwrap{position:relative}
-.sc-tags{display:flex;flex-wrap:nowrap;gap:4px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;-ms-overflow-style:none}
+.sc-tags{display:flex;flex-wrap:nowrap;gap:4px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;-ms-overflow-style:none;cursor:grab;-webkit-user-select:none;user-select:none}
+.sc-tags.sc-tagsdrag{cursor:grabbing}
 .sc-tags::-webkit-scrollbar{width:0;height:0;display:none}
 .sc-tags::-webkit-scrollbar-button{display:none;width:0;height:0}
 .sc-tagbar{position:absolute;left:0;right:0;bottom:0;height:3px;pointer-events:none}
 .sc-tagthumb{position:absolute;top:0;height:3px;border-radius:999px;background:var(--dsw-alias-label-secondary);opacity:.75}
 .sc-tag{flex:0 0 auto;font-size:10.5px;line-height:16px;padding:0 7px;border-radius:999px;color:var(--dsw-alias-brand-primary);background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l2);white-space:nowrap}
+/* 方片页整个不可拖选：卡片上没有需要复制的正文（正文在右边的详情里，那里照样能选），
+   而在上面拖选文字既会误触发卡片的 click，也是那次崩溃的入口。只限主页，画布与
+   各输入框不受影响。 */
+.sc-group,.sc-grid,.sc-tile,.sc-tiletitle,.sc-tilesum{-webkit-user-select:none;user-select:none}
 
 /* ── 分支画布 ─────────────────────────────────────────────────────────────── */
 .sc-board{display:flex;flex-direction:column;flex:1;min-width:0;min-height:0}
@@ -152,12 +160,15 @@ const CSS = `
 /* 连线标签：HTML 层，跟着画布一起平移缩放。平时线上什么都没有，**点一下那条线**，
    它才浮出一个输入框（用户的要求：不选中的时候直接隐藏）；已经起过名字的线，名字
    一直挂着，点名字改。
-   ⚠ 它必须是 .sc-stage 的直接子元素：塞进连线的 <svg> 里浏览器根本不画（0×0、点不到）。 */
-.sc-elabel{position:absolute;transform:translate(-50%,-50%);font-size:10.5px;padding:1px 6px;border-radius:999px;background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary);cursor:pointer;white-space:nowrap;max-width:130px;overflow:hidden;text-overflow:ellipsis}
+   ⚠ 它必须是 .sc-stage 的直接子元素：塞进连线的 <svg> 里浏览器根本不画（0×0、点不到）。
+   z-index：DOM 上它在卡片前面，但线的中点常落在卡片底下，不给它抬起来就会被卡片压住 ——
+   输入框只露半个（用户报的「输入框图层在最底下，看不全」）。6 高过卡片（auto）和
+   选项列（2），但低于展开的大卡片（30）。 */
+.sc-elabel{position:absolute;z-index:6;transform:translate(-50%,-50%);font-size:10.5px;padding:1px 6px;border-radius:999px;background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary);cursor:pointer;white-space:nowrap;max-width:130px;overflow:hidden;text-overflow:ellipsis}
 .sc-elabel:hover{border-color:var(--dsw-alias-label-secondary);color:var(--dsw-alias-label-primary)}
 .sc-elabel.on{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary)}
 /* 起名字用的输入框：宽度跟标签一致，选中时才出现，别把画布撑出任何东西 */
-.sc-elabeledit{width:118px;padding:2px 8px;font-family:inherit;outline:none;color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-brand-primary);cursor:text}
+.sc-elabeledit{z-index:7;width:118px;padding:2px 8px;font-family:inherit;outline:none;color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-brand-primary);cursor:text}
 .sc-elabeledit::placeholder{color:var(--dsw-alias-label-secondary);opacity:.7}
 
 /* 分歧节点的选项：贴在卡片右侧。整列按「选项本身」的高度上下居中，下面的 ＋ 按钮

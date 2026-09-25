@@ -29,27 +29,67 @@ function TagRow(props) {
   const [bar, setBar] = React.useState(null)
   const timer = React.useRef(null)
   const stripRef = React.useRef(null)
-  // deps 写 [] 是有意的：这个 effect 不读任何 state，只挂一个监听器。
+  const dragState = React.useRef(null)
+  // 拖完紧跟的那一次 click 是拖动的尾巴，不是点击 —— 吃掉它，不然顺手就打开了卡片详情。
+  const swallow = React.useRef(false)
+  // deps 写 [] 是有意的：这个 effect 不读任何 state，只挂监听器。
   // 不写 deps（每轮渲染重挂）会被"淡出"这件事坑到：setBar 触发的重渲染会先跑清理，
   // 把刚排上的 700ms 定时器清掉，于是滑块一旦出现就再也不消失。
   React.useEffect(function () {
     const el = stripRef.current
     if (!el || typeof el.addEventListener !== 'function') return undefined
-    function onScroll(ev) {
+    function paint(ev) {
       // 用事件里的 target 量尺寸（真浏览器里就是这根标签条本身）
       setBar(tagThumb(ev && ev.target ? ev.target : el))
       if (timer.current) clearTimeout(timer.current)
       timer.current = setTimeout(function () { setBar(null) }, TAGBAR_MS)
     }
-    el.addEventListener('scroll', onScroll)
+    // 原生滚动条整个藏掉之后，鼠标就再也抓不到那根滑块了 —— 所以「按住标签条横着拖」
+    // 必须自己实现，否则整条只能靠 Shift+滚轮挪（用户报的「滑动功能整个没用了」）。
+    // 拖动过程中标签文字不可选中（CSS 上的 user-select:none），不然一拖就变成选文字。
+    function onMove(ev) {
+      const st = dragState.current
+      if (!st) return
+      const dx = (Number(ev.clientX) || 0) - st.x
+      if (Math.abs(dx) > 3) { st.moved = true; swallow.current = true }
+      if (!st.moved) return
+      el.scrollLeft = st.left - dx
+      if (typeof ev.preventDefault === 'function') ev.preventDefault()
+      paint({ target: el })
+    }
+    function stopDrag() {
+      dragState.current = null
+      if (el.classList && el.classList.remove) el.classList.remove('sc-tagsdrag')
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('pointermove', onMove)
+        window.removeEventListener('pointerup', stopDrag)
+        window.removeEventListener('pointercancel', stopDrag)
+      }
+    }
+    function onDown(ev) {
+      if (ev.button !== undefined && ev.button !== null && ev.button !== 0) return
+      if (typeof window === 'undefined') return
+      dragState.current = { x: Number(ev.clientX) || 0, left: Number(el.scrollLeft) || 0, moved: false }
+      if (el.classList && el.classList.add) el.classList.add('sc-tagsdrag')
+      window.addEventListener('pointermove', onMove)
+      window.addEventListener('pointerup', stopDrag)
+      window.addEventListener('pointercancel', stopDrag)
+    }
+    el.addEventListener('scroll', paint)
+    el.addEventListener('pointerdown', onDown)
     return function () {
-      el.removeEventListener('scroll', onScroll)
+      el.removeEventListener('scroll', paint)
+      el.removeEventListener('pointerdown', onDown)
+      stopDrag()
       if (timer.current) clearTimeout(timer.current)
     }
   }, [])
   if (!tags.length) return null
   return React.createElement('div', { className: 'sc-tagwrap' },
-    React.createElement('div', { className: 'sc-tags', ref: stripRef },
+    React.createElement('div', {
+      className: 'sc-tags', ref: stripRef,
+      onClick: function (ev) { if (swallow.current) { swallow.current = false; ev.stopPropagation() } },
+    },
       tags.map(function (t, i) { return React.createElement('span', { key: i, className: 'sc-tag' }, t) })),
     bar ? React.createElement('div', { className: 'sc-tagbar' },
       React.createElement('div', { className: 'sc-tagthumb', style: { left: bar.left + '%', width: bar.width + '%' } })) : null
@@ -71,14 +111,14 @@ function Tile(props) {
         React.createElement('button', {
           key: 's', className: 'sc-icon' + (starred ? ' on' : ''), title: starred ? '取消收藏' : '收藏',
           onClick: function (e) { e.stopPropagation(); props.onStar(c, !starred) },
-        }, StarIcon({ on: starred })),
+        }, React.createElement(StarIcon, { on: starred })),
         React.createElement('button', {
           key: 'p', className: 'sc-icon' + (pinned ? ' on' : ''), title: pinned ? '取消置顶' : '置顶',
           onClick: function (e) { e.stopPropagation(); props.onPin(c, !pinned) },
-        }, PinIcon({ on: pinned }))
+        }, React.createElement(PinIcon, { on: pinned }))
       )
     ),
-    TagRow({ tags: c.tags }),
+    React.createElement(TagRow, { tags: c.tags }),
     React.createElement('div', { className: 'sc-tilesum' }, c.summary || c.preview || '')
   )
 }
@@ -93,7 +133,7 @@ function ArchiveDetail(props) {
       c.when ? React.createElement('span', null, '时间：' + c.when) : null,
       c.updated ? React.createElement('span', null, '更新：' + c.updated) : null
     ),
-    TagRow({ tags: c.tags }),
+    React.createElement(TagRow, { tags: c.tags }),
     React.createElement('div', { className: 'sc-gap' }),
     props.loading ? React.createElement('div', { className: 'sc-empty' }, '读取中…')
       : markdown(props.body, 'detail')
@@ -152,7 +192,7 @@ function GridView(props) {
             React.createElement('div', { className: 'sc-grid' },
               g.items.map(function (c) {
                 const k = cardKey(c)
-                return Tile({
+                return React.createElement(Tile, {
                   key: k, card: c, on: selected === k,
                   starred: star.indexOf(k) !== -1, pinned: pin.indexOf(k) !== -1,
                   onOpen: props.onOpen, onStar: props.onStar, onPin: props.onPin,
@@ -169,7 +209,7 @@ function GridView(props) {
 
   const detail = React.createElement('div', { className: 'sc-detail' },
     selected && props.detailOpen
-      ? ArchiveDetail({ card: props.detailCard, body: props.detailBody, loading: props.detailLoading })
+      ? React.createElement(ArchiveDetail, { card: props.detailCard, body: props.detailBody, loading: props.detailLoading })
       : React.createElement('div', { className: 'sc-empty' }, '选一张卡片看正文。')
   )
 

@@ -186,7 +186,12 @@ ${css.slice(a, b)}
          （0×0、点不到），可是静态 HTML 看不出这一点 —— HTML 解析器遇到 <g> 里的 <div>
          会直接把它弹出 svg，于是页面照样正常。React 走的是 createElementNS，才会中招。
          所以这里照真实结构摆，并且下面用探测断言它不是 svg 的后代、量得到、点得到。 -->
-    <div class="sc-elabel" style="left:${(outPoint(A, -1, 0).x + inPoint(B).x) / 2}px;top:${(outPoint(A, -1, 0).y + inPoint(B).y) / 2}px" data-edge="lbl1" title="点一下改名字：顺流而下">顺流而下</div>
+    <div class="sc-elabel" id="probe-label" style="left:${(outPoint(A, -1, 0).x + inPoint(B).x) / 2}px;top:${(outPoint(A, -1, 0).y + inPoint(B).y) / 2}px" data-edge="lbl1" title="点一下改名字：顺流而下">顺流而下</div>
+    <!-- 起名字的输入框与标签一样，DOM 上在卡片**前面**。真机上线的中点常常正好落在一张
+         卡片底下，所以这里摆一张压住中点的卡片、再摆一个压在卡片上的输入框：
+         光有 z-index 才看得全（用户报的「输入框图层在最底下，看不全」）。 -->
+    <div class="sc-card" id="probe-lblcover" style="left:250px;top:64px;width:150px;height:56px"><div class="sc-cardsum">压住连线中点的卡片</div></div>
+    <input class="sc-elabel sc-elabeledit" id="probe-edit" style="left:126px;top:289px" value="若答应">
     ${card(A, '<div class="sc-cardrow"><span class="sc-cardname">节点甲</span><span class="sc-cardwhen">第4天</span></div><div class="sc-cardsum">节点甲的简介。</div>', '<div class="sc-port in"></div><div class="sc-port out"></div>')}
     ${card(B, '<div class="sc-cardrow"><span class="sc-cardname">分歧节点甲</span></div><div class="sc-cardsum">这里要分岔。</div>',
       '<div class="sc-choices" style="top:' + choiceTop(B.h, N) + 'px">' + optionRows + '<button class="sc-choiceadd">＋ 选项</button></div><div class="sc-port in"></div>')}
@@ -234,9 +239,9 @@ window.__probe = function () {
   // 公式（n 行 × 30 + 间距 × 5 + ＋按钮 30）必须和真布局对得上。
   out.colHeight = col ? Math.round(col.getBoundingClientRect().height) : null
   out.colRows = document.querySelectorAll('.sc-choice').length
-  const lbl = document.querySelector('.sc-elabel')
+  const lbl = document.getElementById('probe-label')
   if (lbl) {
-    const v = pick(lbl, ['position', 'pointer-events', 'background-color', 'color', 'font-size', 'opacity'])
+    const v = pick(lbl, ['position', 'pointer-events', 'background-color', 'color', 'font-size', 'opacity', 'z-index'])
     v.namespaceURI = lbl.namespaceURI
     // 自己是不是 svg 的后代？是的话浏览器不会画它（连线标签踩过的坑）
     let p = lbl.parentNode
@@ -248,9 +253,28 @@ window.__probe = function () {
     const hit = document.elementFromPoint(cx, cy)
     v.hitAtCenter = hit ? (hit.className && hit.className.baseVal !== undefined ? hit.className.baseVal : String(hit.className)) : null
     v.hitIsLabel = hit === lbl
+    // 中点下面有没有压着一张卡片（有，displacement 才算真的测了层级）
+    const cover = document.getElementById('probe-lblcover')
+    if (cover) {
+      const cr = cover.getBoundingClientRect()
+      v.cardOverlap = cr.left <= cx && cr.right >= cx && cr.top <= cy && cr.bottom >= cy
+      v.coverZ = getComputedStyle(cover).zIndex
+    }
     out.items.push({ what: 'elabel', v: v })
   } else {
     out.items.push({ what: 'elabel', v: { missing: true } })
+  }
+  // 起名字的输入框：必须压在卡片上面（它 DOM 顺序在卡片前面），否则只露半个
+  const ed = document.getElementById('probe-edit')
+  if (ed) {
+    const v2 = pick(ed, ['position', 'z-index', 'width', 'height', 'cursor'])
+    const r2 = ed.getBoundingClientRect()
+    const hit2 = document.elementFromPoint(r2.left + r2.width / 2, r2.top + r2.height / 2)
+    v2.hitAtCenter = hit2 ? (hit2.className && hit2.className.baseVal !== undefined ? hit2.className.baseVal : String(hit2.className)) : null
+    v2.hitIsEdit = hit2 === ed
+    out.items.push({ what: 'elabeledit', v: v2 })
+  } else {
+    out.items.push({ what: 'elabeledit', v: { missing: true } })
   }
   // 对话框：宽度对不对、里面的输入框有没有撑出横向滚动条
   const mbox = document.getElementById('probe-modalbox')
@@ -277,6 +301,9 @@ window.__probe = function () {
       scrollbarWidth: cs.scrollbarWidth,
       overflowX: cs.overflowX,
       scrollable: tags.scrollWidth > tags.clientWidth,
+      // 拖动时不许选中文字（一拖就变拖选是那次崩溃的入口）
+      userSelect: cs.userSelect,
+      cursor: cs.cursor,
     }
   }
   return out
@@ -406,7 +433,15 @@ if (probe) {
   if (modalBad) console.error('!! 对话框有问题 ' + JSON.stringify(m) + ' —— 宽度要和展开的卡片一样（460），输入框要 border-box，别撑出横向滚动条')
   // 标签条：原生滚动条必须藏干净（scrollbar-width:none），但它自己还得能滑
   const t = probe.tags || {}
-  const tagsBad = t.overflowX !== 'auto' || t.scrollbarWidth !== 'none' || !t.scrollable
-  if (tagsBad) console.error('!! 标签条有问题 ' + JSON.stringify(t) + ' —— 原生滚动条要藏掉（scrollbar-width:none）但仍要能横向滑')
-  if (transparent.length || odd.length || lblBad || colBad || modalBad || tagsBad) process.exit(1)
+  const tagsBad = t.overflowX !== 'auto' || t.scrollbarWidth !== 'none' || !t.scrollable ||
+    t.userSelect !== 'none' || t.cursor !== 'grab'
+  if (tagsBad) console.error('!! 标签条有问题 ' + JSON.stringify(t) + ' —— 原生滚动条要藏掉（scrollbar-width:none）、还得能横向滑、拖的时候不能选中文字（user-select:none + cursor:grab）')
+  // 层级：线的中点压着一张卡片（真机上常见），标签和它的输入框都必须还在卡片上面，
+  // 否则点线浮出来的输入框只露半个 —— 用户报的「输入框图层在最底下，看不全」。
+  const ed = probe.items.filter((x) => x.what === 'elabeledit')[0]
+  const layerBad = !lbl || lbl.v.missing || !lbl.v.cardOverlap || !lbl.v.hitIsLabel ||
+    !ed || ed.v.missing || !ed.v.hitIsEdit
+  if (layerBad) console.error('!! 连线上那个输入框被卡片压住了 ' + JSON.stringify({ lbl: lbl && lbl.v, ed: ed && ed.v }) +
+    ' —— .sc-elabel 要带 z-index（比卡片高、比展开的大卡片低）')
+  if (transparent.length || odd.length || lblBad || colBad || modalBad || tagsBad || layerBad) process.exit(1)
 }

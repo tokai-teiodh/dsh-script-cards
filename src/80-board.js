@@ -205,7 +205,7 @@ function CardBody(props) {
         React.createElement('span', { className: 'sc-cardcode' }, cardCode(c) || '§'),
         React.createElement('span', { className: 'sc-cardname' }, cardName(c) || c.file)
       ),
-      React.createElement('div', { style: { marginTop: 5 } }, TagRow({ tags: c.tags })),
+      React.createElement('div', { style: { marginTop: 5 } }, React.createElement(TagRow, { tags: c.tags })),
       React.createElement('div', { className: 'sc-cardsum' }, c.summary || plainText(c.body) || '（还没有简介）'),
       expanded ? React.createElement('div', { className: 'sc-nodelist' },
         props.nodes.length === 0
@@ -284,7 +284,7 @@ function CardView(props) {
 
   const children = [
     React.createElement('div', { key: 'b', style: { display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 } },
-      CardBody({
+      React.createElement(CardBody, {
         card: c, rec: rec, expanded: props.expanded, nodes: props.childNodes || [],
         onOpenNode: props.onOpenNode,
       })

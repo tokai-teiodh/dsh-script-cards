@@ -673,8 +673,11 @@ function BoardView(props) {
   const edgeEls = []
   // 连线标签**不能**放进 <svg> 里 —— 浏览器不渲染 SVG 里的 HTML 元素，它会是 0×0、
   // 点不到（用户报的「连线不能编辑名字」就是这个：标签一直画不出来，也就没有可点的
-  // 地方）。这里单独攒一层 HTML，渲染在 svg 之后、卡片之前：压在线上面、在卡片下面。
-  // 静态 HTML 里看不出这个坑（HTML 解析器会把塞进 <g> 的 div 弹出 svg），
+  // 地方）。这里单独攒一层 HTML，渲染在 svg 之后、卡片之前。
+  // DOM 顺序在卡片前面，可它**不能**因此就被卡片压住：线的中点常常落在某张卡片底下，
+  // 那样点线浮出来的输入框就只露半个（用户报的「输入框图层在最底下，看不全」）。
+  // 所以 .sc-elabel 自己带 z-index，比卡片（auto）和选项列（2）都高。
+  // 静态 HTML 里看不出「塞进 <g>」这个坑（HTML 解析器会把 div 弹出 svg），
   // 只有 React 那样走 createElementNS 才会中招 —— 所以 tests/visual.mjs 盯着这条。
   const edgeLabels = []
   for (const e of edges) {
@@ -816,7 +819,7 @@ function BoardView(props) {
           c.when && c.type !== 'chapter' ? React.createElement('span', null, '时间：' + c.when) : null,
           React.createElement('span', null, '文件：' + c.file)
         ),
-        TagRow({ tags: c.tags }),
+        React.createElement(TagRow, { tags: c.tags }),
         c.type === 'chapter'
           ? React.createElement('div', null,
             React.createElement('div', { className: 'sc-h2' }, '下属节点'),

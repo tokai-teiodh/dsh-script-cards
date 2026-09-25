@@ -6,7 +6,7 @@ const React = require('react')
 
 const TAB_ID = 'dsh-script-cards/panel'
 const TAB_KIND = 'script-cards'
-const VERSION = 'v0.1.1-alpha.1'
+const VERSION = 'v0.1.1-alpha.2'
 
 // 面板里所有「浮在中间的那块」统一一个宽度：展开的卡片、各个对话框。
 // 之前对话框有 380 / 420 / 520 三档，展开的卡片又是 460，点来点去界面宽度一直在变
