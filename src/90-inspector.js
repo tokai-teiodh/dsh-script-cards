@@ -59,7 +59,7 @@ function CardEditor(props) {
 
   return Modal({
     title: '编辑 ' + typeLabel(card.type) + ' · ' + card.file,
-    width: 620, onClose: props.onClose,
+    width: PANEL_W, onClose: props.onClose,
     footer: [
       React.createElement('button', { key: 'd', className: 'sc-btn sc-btn-warn', onClick: function () { props.onDelete(card) } }, '删除卡片文件'),
       React.createElement('span', { key: 's', className: 'sc-spacer' }),
@@ -108,7 +108,7 @@ function PromptDialog(props) {
   const [value, setValue] = React.useState(props.value || '')
   return Modal({
     title: props.title,
-    width: 380, onClose: props.onClose,
+    width: PANEL_W, onClose: props.onClose,
     footer: [
       React.createElement('span', { key: 's', className: 'sc-spacer' }),
       React.createElement('button', { key: 'c', className: 'sc-btn', onClick: props.onClose }, '取消'),
@@ -128,7 +128,7 @@ function PromptDialog(props) {
 function ConfirmDialog(props) {
   return Modal({
     title: props.title,
-    width: 420, onClose: props.onClose,
+    width: PANEL_W, onClose: props.onClose,
     footer: [
       React.createElement('span', { key: 's', className: 'sc-spacer' }),
       React.createElement('button', { key: 'c', className: 'sc-btn', onClick: props.onClose }, '取消'),
@@ -147,7 +147,7 @@ function ChoiceEditor(props) {
   }
   return Modal({
     title: '分歧选项 · ' + cardDisplay(props.card),
-    width: 520, onClose: props.onClose,
+    width: PANEL_W, onClose: props.onClose,
     footer: [
       React.createElement('button', { key: 'a', className: 'sc-btn', onClick: function () { setList(list.concat([{ id: uid('o'), text: '选项' + String.fromCharCode(65 + list.length), to: '' }])) } }, '＋ 添加选项（Ctrl+Enter 同效）'),
       React.createElement('span', { key: 's', className: 'sc-spacer' }),
@@ -179,7 +179,7 @@ function SwatchEditor(props) {
   }
   return Modal({
     title: '编辑色卡（只存这台浏览器，不会进代码仓库）',
-    width: 460, onClose: props.onClose,
+    width: PANEL_W, onClose: props.onClose,
     footer: [
       React.createElement('button', {
         key: 'r', className: 'sc-btn',
@@ -219,7 +219,7 @@ function SettingsDialog(props) {
   function upd(k, v) { setDirs(Object.assign({}, dirs, { [k]: v })) }
   return Modal({
     title: '档案目录名（按项目保存，只存这台浏览器）',
-    width: 480, onClose: props.onClose,
+    width: PANEL_W, onClose: props.onClose,
     footer: [
       React.createElement('button', { key: 'r', className: 'sc-btn', onClick: function () { setDirs(normDirs(null)) } }, '恢复默认'),
       React.createElement('span', { key: 's', className: 'sc-spacer' }),

@@ -182,12 +182,33 @@ ${css.slice(a, b)}
         <path class="sc-edge temp" d="${edgeTemp}"></path>
       </g>
     </svg>
-    <div class="sc-elabel empty" style="left:${(outPoint(A, -1, 0).x + inPoint(B).x) / 2}px;top:${(outPoint(A, -1, 0).y + inPoint(B).y) / 2}px">连线</div>
+    <!-- 连线标签必须在 svg **外面**。放进 <g> 里的话，浏览器不渲染 SVG 里的 HTML 元素
+         （0×0、点不到），可是静态 HTML 看不出这一点 —— HTML 解析器遇到 <g> 里的 <div>
+         会直接把它弹出 svg，于是页面照样正常。React 走的是 createElementNS，才会中招。
+         所以这里照真实结构摆，并且下面用探测断言它不是 svg 的后代、量得到、点得到。 -->
+    <div class="sc-elabel" style="left:${(outPoint(A, -1, 0).x + inPoint(B).x) / 2}px;top:${(outPoint(A, -1, 0).y + inPoint(B).y) / 2}px" data-edge="lbl1" title="点一下改名字：顺流而下">顺流而下</div>
     ${card(A, '<div class="sc-cardrow"><span class="sc-cardname">节点甲</span><span class="sc-cardwhen">第4天</span></div><div class="sc-cardsum">节点甲的简介。</div>', '<div class="sc-port in"></div><div class="sc-port out"></div>')}
     ${card(B, '<div class="sc-cardrow"><span class="sc-cardname">分歧节点甲</span></div><div class="sc-cardsum">这里要分岔。</div>',
       '<div class="sc-choices" style="top:' + choiceTop(B.h, N) + 'px">' + optionRows + '<button class="sc-choiceadd">＋ 选项</button></div><div class="sc-port in"></div>')}
     ${card(C, '<div class="sc-cardkind">结果</div><div class="sc-cardmono">结果甲</div>', '<div class="sc-port in"></div>')}
     ${card(D, '<div class="sc-cardkind">条件</div><div class="sc-cardmono">条件甲</div>', '<div class="sc-port in"></div><div class="sc-port out"></div>')}
+    <div class="sc-tagwrap" style="position:absolute;left:240px;top:520px;width:180px">
+      <div class="sc-tags"><span class="sc-tag">共通</span><span class="sc-tag">主线</span><span class="sc-tag">日常</span><span class="sc-tag">很长的一个标签</span></div>
+      <div class="sc-tagbar"><div class="sc-tagthumb" style="left:0;width:40%"></div></div>
+    </div>
+  </div>
+  <!-- 对话框：宽度必须和展开的卡片一致（460 = PANEL_W），里面 width:100% 的输入框
+       不许撑出横向滚动条（那是 box-sizing:border-box 的活）—— 用户报的「输入框和展开的
+       卡片宽度不一样，下面还有一个滑条」。静态页面里就能量出来。 -->
+  <div class="sc-modal" style="position:absolute;left:400px;top:40px;right:auto;bottom:auto;padding:0;background:transparent">
+    <div class="sc-modalbox" id="probe-modalbox">
+      <div class="sc-modalh"><h3>编辑卡片</h3></div>
+      <div class="sc-modalb" id="probe-modalb">
+        <div class="sc-frow"><label class="sc-field"><span class="sc-lbl">简介</span><input class="sc-inp full" value="卡片最下面显示的一行"></label></div>
+        <div class="sc-frow"><label class="sc-field"><span class="sc-lbl">标签</span><input class="sc-inp wide" value="共通, 主线"></label></div>
+      </div>
+      <div class="sc-modalf"><button class="sc-btn">取消</button><button class="sc-btn sc-btn-on">保存</button></div>
+    </div>
   </div>
 </div></div></div>
 <script>
@@ -209,6 +230,55 @@ window.__probe = function () {
   })
   const col = document.querySelector('.sc-choices')
   if (col) out.items.push({ what: 'choices', v: pick(col, ['top', 'left', 'width']) })
+  // 选项列的**实测**高度：自动排列的占位（卡片 + 选项列）就是按它算的，
+  // 公式（n 行 × 30 + 间距 × 5 + ＋按钮 30）必须和真布局对得上。
+  out.colHeight = col ? Math.round(col.getBoundingClientRect().height) : null
+  out.colRows = document.querySelectorAll('.sc-choice').length
+  const lbl = document.querySelector('.sc-elabel')
+  if (lbl) {
+    const v = pick(lbl, ['position', 'pointer-events', 'background-color', 'color', 'font-size', 'opacity'])
+    v.namespaceURI = lbl.namespaceURI
+    // 自己是不是 svg 的后代？是的话浏览器不会画它（连线标签踩过的坑）
+    let p = lbl.parentNode
+    v.insideSvg = false
+    while (p && p.nodeType === 1) { if (String(p.nodeName).toLowerCase() === 'svg') { v.insideSvg = true; break } p = p.parentNode }
+    const r = lbl.getBoundingClientRect()
+    const cx = r.left + r.width / 2
+    const cy = r.top + r.height / 2
+    const hit = document.elementFromPoint(cx, cy)
+    v.hitAtCenter = hit ? (hit.className && hit.className.baseVal !== undefined ? hit.className.baseVal : String(hit.className)) : null
+    v.hitIsLabel = hit === lbl
+    out.items.push({ what: 'elabel', v: v })
+  } else {
+    out.items.push({ what: 'elabel', v: { missing: true } })
+  }
+  // 对话框：宽度对不对、里面的输入框有没有撑出横向滚动条
+  const mbox = document.getElementById('probe-modalbox')
+  const mbody = document.getElementById('probe-modalb')
+  if (mbox && mbody) {
+    const inp = mbody.querySelector('.sc-inp.full')
+    const full = inp ? inp.getBoundingClientRect() : null
+    const body = mbody.getBoundingClientRect()
+    out.modal = {
+      boxWidth: Math.round(mbox.getBoundingClientRect().width),
+      bodyClient: mbody.clientWidth,
+      bodyScroll: mbody.scrollWidth,
+      inputOuter: full ? Math.round(full.width) : null,
+      inputOverflows: !!full && (full.left < body.left - 0.5 || full.right > body.right + 0.5),
+      inputBoxSizing: inp ? getComputedStyle(inp).boxSizing : null,
+    }
+  }
+  // 标签条：原生滚动条藏干净了没有
+  const tags = document.querySelector('.sc-tags')
+  if (tags) {
+    const cs = getComputedStyle(tags)
+    out.tags = {
+      height: Math.round(tags.getBoundingClientRect().height),
+      scrollbarWidth: cs.scrollbarWidth,
+      overflowX: cs.overflowX,
+      scrollable: tags.scrollWidth > tags.clientWidth,
+    }
+  }
   return out
 }
 </script>
@@ -322,5 +392,21 @@ if (probe) {
   if (transparent.length) console.error('!! 有 ' + transparent.length + ' 条连线的 stroke 是 none —— 线根本画不出来')
   const odd = probe.items.filter((x) => x.what.indexOf('port#') === 0 && x.v['border-top-width'] === '0px')
   if (odd.length) console.error('!! 有 ' + odd.length + ' 个圆点没有描边 —— 大概率是颜色变量没解析出来')
-  if (transparent.length || odd.length) process.exit(1)
+  // 连线标签：画得出来（有尺寸）、在 svg 外面、点得到。三条缺一条，用户就改不了连线的名字。
+  const lbl = probe.items.filter((x) => x.what === 'elabel')[0]
+  const lblBad = !lbl || lbl.v.missing || lbl.v.insideSvg || !lbl.v.rect[2] || !lbl.v.rect[3] || !lbl.v.hitIsLabel
+  if (lblBad) console.error('!! 连线标签不可用 ' + JSON.stringify(lbl && lbl.v) + ' —— 标签要是 svg 的后代就画不出来（0×0、点不到）')
+  // 选项列的真实高度 = n*30 + (n-1)*5 + 5 + 30（自动排列按它让位）
+  const wantCol = probe.colRows * 30 + Math.max(0, probe.colRows - 1) * 5 + 5 + 30
+  const colBad = probe.colHeight !== wantCol
+  if (colBad) console.error('!! 选项列实测高度 ' + probe.colHeight + 'px，按公式应当是 ' + wantCol + 'px —— 自动排列的占位是照公式算的')
+  // 对话框：宽度和展开的卡片一致（460），里面的输入框不许撑出横向滚动条
+  const m = probe.modal || {}
+  const modalBad = m.boxWidth !== 460 || m.inputBoxSizing !== 'border-box' || m.inputOverflows || (m.bodyScroll || 0) > (m.bodyClient || 0) + 1
+  if (modalBad) console.error('!! 对话框有问题 ' + JSON.stringify(m) + ' —— 宽度要和展开的卡片一样（460），输入框要 border-box，别撑出横向滚动条')
+  // 标签条：原生滚动条必须藏干净（scrollbar-width:none），但它自己还得能滑
+  const t = probe.tags || {}
+  const tagsBad = t.overflowX !== 'auto' || t.scrollbarWidth !== 'none' || !t.scrollable
+  if (tagsBad) console.error('!! 标签条有问题 ' + JSON.stringify(t) + ' —— 原生滚动条要藏掉（scrollbar-width:none）但仍要能横向滑')
+  if (transparent.length || odd.length || lblBad || colBad || modalBad || tagsBad) process.exit(1)
 }

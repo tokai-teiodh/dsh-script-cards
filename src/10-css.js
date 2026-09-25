@@ -64,16 +64,17 @@ const CSS = `
 .sc-narrow .sc-h1{font-size:17px}
 .sc-dockbtn{white-space:nowrap;display:inline-flex;align-items:center;gap:6px}
 
-/* 标签条：不悬停时看不见滚动条，但**位置要一直留着**（5px 高度恒定，只把滑块藏起来）。
-   原来是 height:0 → hover 时 height:5px，那是「悬停改变元素高度」：滑块一出现就把标签
-   顶走，指针落回原处又取消悬停，于是来回抖，网格跟着跳 —— 侧栏一抖，对话列跟着换行，
-   看起来就是「主界面的对话框莫名上下跳动」。悬停只该改颜色，不该改尺寸。 */
-.sc-tags{display:flex;flex-wrap:nowrap;gap:4px;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin}
-.sc-tags::-webkit-scrollbar{height:5px}
-.sc-tags::-webkit-scrollbar-track{background:transparent}
-.sc-tags::-webkit-scrollbar-thumb{background:transparent;border-radius:3px}
-.sc-tags:hover::-webkit-scrollbar-thumb{background:var(--dsw-alias-border-l2)}
-.sc-tags::-webkit-scrollbar-thumb:hover{background:var(--dsw-alias-label-secondary)}
+/* 标签条：**平时一点滚动条都看不到**，滑的时候才浮出一根细条（用户的要求）。
+   Windows 的原生滚动条带两侧三角箭头，很丑，所以整个藏掉、也不占位；
+   「悬停才显示」那种写法又会「悬停改尺寸」——滑块一出现就把标签顶走，指针落回原处又取消
+   悬停，来回抖，网格跟着跳（侧栏一抖，对话列跟着换行，看起来就是「主界面的对话框莫名
+   上下跳动」）。现在自己画的那根是绝对定位的，出现或消失都不挪动任何东西。 */
+.sc-tagwrap{position:relative}
+.sc-tags{display:flex;flex-wrap:nowrap;gap:4px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;-ms-overflow-style:none}
+.sc-tags::-webkit-scrollbar{width:0;height:0;display:none}
+.sc-tags::-webkit-scrollbar-button{display:none;width:0;height:0}
+.sc-tagbar{position:absolute;left:0;right:0;bottom:0;height:3px;pointer-events:none}
+.sc-tagthumb{position:absolute;top:0;height:3px;border-radius:999px;background:var(--dsw-alias-label-secondary);opacity:.75}
 .sc-tag{flex:0 0 auto;font-size:10.5px;line-height:16px;padding:0 7px;border-radius:999px;color:var(--dsw-alias-brand-primary);background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l2);white-space:nowrap}
 
 /* ── 分支画布 ─────────────────────────────────────────────────────────────── */
@@ -148,9 +149,16 @@ const CSS = `
 .sc-port.out{right:-8px}
 .sc-card:hover .sc-port,.sc-card.on .sc-port{opacity:1}
 .sc-port.hot{opacity:1;background:var(--sc-accent,var(--dsw-alias-brand-primary))}
+/* 连线标签：HTML 层，跟着画布一起平移缩放。平时线上什么都没有，**点一下那条线**，
+   它才浮出一个输入框（用户的要求：不选中的时候直接隐藏）；已经起过名字的线，名字
+   一直挂着，点名字改。
+   ⚠ 它必须是 .sc-stage 的直接子元素：塞进连线的 <svg> 里浏览器根本不画（0×0、点不到）。 */
 .sc-elabel{position:absolute;transform:translate(-50%,-50%);font-size:10.5px;padding:1px 6px;border-radius:999px;background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary);cursor:pointer;white-space:nowrap;max-width:130px;overflow:hidden;text-overflow:ellipsis}
+.sc-elabel:hover{border-color:var(--dsw-alias-label-secondary);color:var(--dsw-alias-label-primary)}
 .sc-elabel.on{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary)}
-.sc-elabel.empty{opacity:.45;font-style:italic}
+/* 起名字用的输入框：宽度跟标签一致，选中时才出现，别把画布撑出任何东西 */
+.sc-elabeledit{width:118px;padding:2px 8px;font-family:inherit;outline:none;color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-brand-primary);cursor:text}
+.sc-elabeledit::placeholder{color:var(--dsw-alias-label-secondary);opacity:.7}
 
 /* 分歧节点的选项：贴在卡片右侧。整列按「选项本身」的高度上下居中，下面的 ＋ 按钮
    挂在最后一个选项下面、不参与居中（用户的要求：居中的选项不包括 ＋，但 ＋ 照样在）。
@@ -168,7 +176,7 @@ const CSS = `
 .sc-choice .sc-port{top:50%;margin-top:-8px;opacity:1}
 .sc-choice .sc-choicego{flex:none;opacity:.75}
 .sc-choice.linked{border-color:var(--sc-accent,var(--dsw-alias-brand-primary))}
-.sc-choiceadd{border:1px dashed var(--dsw-alias-border-l2);border-radius:9px;background:transparent;color:var(--dsw-alias-label-secondary);font-size:11px;font-family:inherit;padding:4px 8px;cursor:pointer;text-align:left}
+.sc-choiceadd{box-sizing:border-box;height:30px;border:1px dashed var(--dsw-alias-border-l2);border-radius:9px;background:transparent;color:var(--dsw-alias-label-secondary);font-size:11px;font-family:inherit;padding:0 8px;cursor:pointer;text-align:left}
 .sc-choiceadd:hover{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary)}
 
 /* 章节卡片的节点列表（展开态）：一次最多显示 5 行，剩下的用滑条 */
@@ -228,9 +236,12 @@ const CSS = `
 /* 面板主体容器 */
 .sc-bodycol{display:flex;flex-direction:column;flex:1;min-height:0}
 
-/* 对话框 */
+/* 对话框：宽度和展开的卡片一样（PANEL_W = 460，见 src/00-head.js），
+   而且用 border-box —— 那句 width 是「整块多宽」，跟 .sc-expand 一个口径，
+   不然外面再加上 1px 描边就变成 462，和展开的卡片差 2px。
+   以前对话框是 380 / 420 / 520 各一档，点来点去界面宽度一直在变。 */
 .sc-modal{position:fixed;inset:0;z-index:99997;background:rgba(0,0,0,.42);display:flex;align-items:center;justify-content:center;padding:24px}
-.sc-modalbox{width:520px;max-width:100%;max-height:100%;display:flex;flex-direction:column;border-radius:14px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-base);box-shadow:0 24px 70px rgba(0,0,0,.5);overflow:hidden}
+.sc-modalbox{box-sizing:border-box;width:460px;max-width:100%;max-height:100%;display:flex;flex-direction:column;border-radius:14px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-base);box-shadow:0 24px 70px rgba(0,0,0,.5);overflow:hidden}
 .sc-modalh{display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid var(--dsw-alias-border-l1);flex:none}
 .sc-modalh h3{margin:0;font-size:14px;font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sc-modalb{padding:14px 16px;overflow:auto;flex:1;min-height:0}
@@ -239,12 +250,15 @@ const CSS = `
 .sc-frow:last-child{margin-bottom:0}
 .sc-field{display:flex;flex-direction:column;gap:4px;min-width:0}
 .sc-lbl{font-size:11px;color:var(--dsw-alias-label-secondary);line-height:1.4}
-.sc-inp{border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-base);color:inherit;border-radius:8px;padding:5px 8px;font-size:12.5px;font-family:inherit;outline:none;min-width:0}
+/* box-sizing:border-box 不能少：width:100% 的输入框再加上左右内边距和描边，
+   会比容器宽出 18px —— 对话框里就多出一条横向滚动条（用户报的「下面还有一个滑条，
+   很明显没有必要」）。 */
+.sc-inp{box-sizing:border-box;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-base);color:inherit;border-radius:8px;padding:5px 8px;font-size:12.5px;font-family:inherit;outline:none;min-width:0}
 .sc-inp:focus{border-color:var(--dsw-alias-brand-primary)}
 .sc-inp.num{width:72px}
 .sc-inp.wide{width:230px}
 .sc-inp.full{width:100%}
-.sc-area{width:100%;min-height:200px;resize:vertical;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-base);color:inherit;border-radius:8px;padding:8px 10px;font-size:12.5px;line-height:1.7;font-family:ui-monospace,Menlo,Consolas,monospace;outline:none}
+.sc-area{box-sizing:border-box;width:100%;min-height:200px;resize:vertical;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-base);color:inherit;border-radius:8px;padding:8px 10px;font-size:12.5px;line-height:1.7;font-family:ui-monospace,Menlo,Consolas,monospace;outline:none}
 .sc-area:focus{border-color:var(--dsw-alias-brand-primary)}
 .sc-hintbox{margin-top:8px;font-size:11.5px;line-height:1.6;color:var(--dsw-alias-label-secondary)}
 .sc-code{background:var(--dsw-alias-bg-layer-2);border-radius:4px;padding:0 4px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.94em}

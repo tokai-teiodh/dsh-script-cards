@@ -332,21 +332,17 @@ function CardsPanel(props) {
           saveGraph(next, [key])
         }).catch(function (e) { pushNotice('粘贴失败：' + msgOf(e)) })
       },
-      onRenameEdge: function (e) {
-        setDialog({
-          kind: 'prompt', title: '连线名称', value: e.label || '', okLabel: '保存',
-          onOk: function (v) {
-            const next = {
-              version: 1, chapters: graph.chapters.slice(), nodes: Object.assign({}, graph.nodes),
-              edges: graph.edges.map(function (x) {
-                return (x.from === e.from && x.to === e.to && String(x.choice || '') === String(e.choice || ''))
-                  ? Object.assign({}, x, { label: v }) : x
-              }),
-            }
-            saveGraph(next)
-            setDialog(null)
-          },
-        })
+      // 连线的名字直接在线上改（画布上浮出一个输入框），不走对话框：
+      // 弹个框挡在中间，既和展开的卡片宽度对不上，又平白多一层。
+      onSetEdgeLabel: function (e, label) {
+        const next = {
+          version: 1, chapters: graph.chapters.slice(), nodes: Object.assign({}, graph.nodes),
+          edges: graph.edges.map(function (x) {
+            return (x.from === e.from && x.to === e.to && String(x.choice || '') === String(e.choice || ''))
+              ? Object.assign({}, x, { label: label }) : x
+          }),
+        }
+        saveGraph(next)
       },
       onEditChoices: function (card) {
         const rec = nodeRec(graph, cardKey(card))

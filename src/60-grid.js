@@ -6,11 +6,54 @@
 // 分支族（chapter/node/condition/result）**不在这里出现**（要求 4）。
 // ══════════════════════════════════════════════════════════════════════════════
 
+// 标签条：横向能滑，但**平时一点滚动条都看不到**（用户的要求：不动的时候隐藏，
+// 只有动起来才显现）。Windows 的原生滚动条自带两侧三角箭头，很丑；而且「悬停才显示」
+// 的写法会让指针和元素互相追着跑（滑块一出现就把内容顶走 → 取消悬停 → 缩回去 → 又悬停），
+// 整块布局高频抖。
+// 做法：原生滚动条整个藏掉（连箭头一起，也不占位），自己画一根细指示条 ——
+// 绝对定位、不参与布局，所以它的出现/消失不会挪动任何东西；滚动时点亮，停下 700ms 淡出。
+const TAGBAR_MS = 700
+
+function tagThumb(el) {
+  const total = Number(el && el.scrollWidth) || 0
+  const view = Number(el && el.clientWidth) || 0
+  if (!total || total <= view) return null
+  const width = Math.max(10, (view / total) * 100)
+  const max = total - view
+  const left = (max > 0 ? Number(el.scrollLeft) / max : 0) * (100 - width)
+  return { left: left, width: width }
+}
+
 function TagRow(props) {
   const tags = props.tags || []
+  const [bar, setBar] = React.useState(null)
+  const timer = React.useRef(null)
+  const stripRef = React.useRef(null)
+  // deps 写 [] 是有意的：这个 effect 不读任何 state，只挂一个监听器。
+  // 不写 deps（每轮渲染重挂）会被"淡出"这件事坑到：setBar 触发的重渲染会先跑清理，
+  // 把刚排上的 700ms 定时器清掉，于是滑块一旦出现就再也不消失。
+  React.useEffect(function () {
+    const el = stripRef.current
+    if (!el || typeof el.addEventListener !== 'function') return undefined
+    function onScroll(ev) {
+      // 用事件里的 target 量尺寸（真浏览器里就是这根标签条本身）
+      setBar(tagThumb(ev && ev.target ? ev.target : el))
+      if (timer.current) clearTimeout(timer.current)
+      timer.current = setTimeout(function () { setBar(null) }, TAGBAR_MS)
+    }
+    el.addEventListener('scroll', onScroll)
+    return function () {
+      el.removeEventListener('scroll', onScroll)
+      if (timer.current) clearTimeout(timer.current)
+    }
+  }, [])
   if (!tags.length) return null
-  return React.createElement('div', { className: 'sc-tags' },
-    tags.map(function (t, i) { return React.createElement('span', { key: i, className: 'sc-tag' }, t) }))
+  return React.createElement('div', { className: 'sc-tagwrap' },
+    React.createElement('div', { className: 'sc-tags', ref: stripRef },
+      tags.map(function (t, i) { return React.createElement('span', { key: i, className: 'sc-tag' }, t) })),
+    bar ? React.createElement('div', { className: 'sc-tagbar' },
+      React.createElement('div', { className: 'sc-tagthumb', style: { left: bar.left + '%', width: bar.width + '%' } })) : null
+  )
 }
 
 function Tile(props) {

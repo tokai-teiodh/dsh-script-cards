@@ -70,7 +70,9 @@ function makeFiles() {
   card('node-n1.md', { id: 'node-n1', type: 'node', title: '节点一', when: '第4天', order: '10', summary: '节点的简介', tags: '日常' },
     '## 角色\n- 甲\n- 乙\n\n## 场景\n- 某地\n\n## 内容\n- 发生了某件事\n')
   card('node-n2.md', { id: 'node-n2', type: 'node', title: '节点二', when: '第2天', order: '20', summary: '另一个节点' })
-  card('node-n3.md', { id: 'node-n3', type: 'node', title: '节点三', mode: 'branch', when: '第7天', order: '30', summary: '有分支的节点' })
+  // N3 的 order 最小，是为了让它在本章节里排第一 —— Z 段要验的就是「一层的第一张卡片
+  // 带着长长的选项列时，也不会被自己的选项列推下去」（用户报的「默认不居中」）。
+  card('node-n3.md', { id: 'node-n3', type: 'node', title: '节点三', mode: 'branch', when: '第7天', order: '05', summary: '有分支的节点' })
   card('condition-c1.md', { id: 'condition-c1', type: 'condition', title: '条件一', when: '第4天' })
   card('result-r1.md', { id: 'result-r1', type: 'result', title: '结果一' })
   // archive family: grid only
@@ -244,7 +246,8 @@ has(view.text(), '剧本档案', 'address bar shows the root crumb')
 ok(view.findAll('sc-navbtn').length >= 3, 'nav bar has back/forward/up/refresh')
 eq(view.findAll('sc-dockcard').length, 0, 'every chapter is placed, so the dock is empty')
 ok(view.findAll('sc-edge').length >= 1, 'edges between chapters are drawn')
-ok(view.findAll('sc-elabel').length >= 1, 'edges carry a clickable label')
+eq(view.findAll('sc-elabel').length, 1, 'only the line that already has a name shows anything')
+eq(view.textOf(view.findAll('sc-elabel')[0]), '接着走', 'and it shows that name')
 
 // ── C. drill into a chapter, then back/forward ───────────────────────────────
 console.log('\nC. double-click drill-down / back / forward')
@@ -295,7 +298,15 @@ const fromPort = view.findAll('sc-port').filter((n) => n.props['data-port'] === 
 ok(!!fromPort, 'the choice port carries data-choice')
 view.fire(fromPort, 'onPointerDown', { clientX: 200, clientY: 200 })
 await tick()
-const toPort = view.findAll('sc-port').filter((n) => n.props['data-port'] === 'in')[0]
+// 落到「节点一」的入口上（按 data-key 找卡片，别按渲染顺序取第一个 —— 卡片的顺序由
+// 章节内的 order 决定，改动 fixture 排序会让「第一个入口」变成别的卡片）
+const toCard = view.findAll('sc-card').filter((n) => n.props['data-key'] === N1)[0]
+const toPort = (function () {
+  const out = []
+  const visit = (n) => { if (!n) return; out.push(n); if (n.children) for (const c of n.children) visit(c) }
+  visit(toCard)
+  return out.filter((n) => n.kind === 'host' && n.props && n.props['data-port'] === 'in')[0]
+})()
 view.fire(toPort, 'onPointerUp', { clientX: 210, clientY: 210 })
 await tick()
 ok(JSON.parse(files[GRAPH]).edges.some((e) => e.choice === 'o1'), 'the edge dragged from a choice was written to the graph file')
@@ -578,10 +589,15 @@ eq(gAdd.nodes[N3].choices[1].to, '', 'the fresh choice starts unconnected')
 
 const choiceEdge = view.findAll('sc-edgehit').filter((n) => n.props['data-edge'] === N3 + '->' + N1)[0]
 ok(!!choiceEdge, 'the choice edge is on the canvas')
-view.fire(choiceEdge, 'onContextMenu', {})
+view.fire(choiceEdge, 'onContextMenu', { clientX: 300, clientY: 200 })
+await tick()
+// 右键不再当场删线（删一条设计好的连线太容易误触），而是弹一个小菜单。
+const delLine = view.findAll('sc-menuitem').filter((n) => view.textOf(n).indexOf('删除这条连线') !== -1)[0]
+ok(!!delLine, 'right-clicking a line offers a menu instead of deleting it on the spot')
+view.click(delLine)
 await tick()
 const gDel = JSON.parse(files[GRAPH])
-ok(!gDel.edges.some((e) => e.from === N3 && e.to === N1), 'right-clicking a line deletes it')
+ok(!gDel.edges.some((e) => e.from === N3 && e.to === N1), 'choosing 删除这条连线 deletes it')
 eq(gDel.nodes[N3].choices[0].to, '', 'deleting the line also unlinks the choice')
 
 // ── O2. creating a branch node straight from the menu ────────────────────────
@@ -746,11 +762,17 @@ ok(portRule.indexOf('scale(') === -1, 'nothing scales a port (a transform on a 1
 has(rule('.sc-choice'), 'height:30px', 'option rows are a fixed height, so the rows below them cannot drift')
 ok(rule('.sc-choice').indexOf('overflow:hidden') === -1, 'an option row does not clip its own port either', rule('.sc-choice'))
 ok(rule('.sc-choices').indexOf('top:') === -1, 'the column top is not hard-coded in CSS any more (the geometry supplies it)')
-// 悬停不许改尺寸：`height:0` → `:hover{height:5px}` 这种写法会让指针和元素互相追着跑
-// （滑块出现把内容顶走 → 取消悬停 → 缩回去 → 又悬停），整块布局跟着高频抖。
-ok(rule('.sc-tags').indexOf('scrollbar-width:thin') !== -1, 'the tag strip reserves its scrollbar space instead of toggling it on hover')
-eq((rule('.sc-tags::-webkit-scrollbar') || '').indexOf('height:0'), -1, 'the tag strip scrollbar does not appear/disappear on hover')
-has(rule('.sc-tags:hover::-webkit-scrollbar-thumb'), 'background', 'hovering only recolours the thumb, it does not resize anything')
+// 标签条：平时**一点滚动条都看不到**，滑的时候才浮出自己画的一根（用户的要求）。
+// 原生那条必须整个藏掉 —— Windows 会给它配两侧的三角箭头，很丑。
+// 自己画的那根是绝对定位的覆盖层：出现/消失都不参与布局，所以不会有「悬停改尺寸」那种
+// 高频抖（原来 :hover 里换滑块颜色，指针和元素会互相追着跑，整块布局跟着跳）。
+const tagsRule = rule('.sc-tags')
+has(tagsRule, 'scrollbar-width:none', 'the tag strip hides the native scrollbar entirely')
+has(rule('.sc-tags::-webkit-scrollbar'), 'display:none', 'and the Chromium one too')
+has(rule('.sc-tags::-webkit-scrollbar-button'), 'display:none', 'no arrow buttons (Windows draws them by default)')
+ok(tagsRule.indexOf('scrollbar-width:thin') === -1, 'it no longer reserves space for a scrollbar it does not show', tagsRule)
+has(rule('.sc-tagbar'), 'position:absolute', 'the bar shown while scrolling is an overlay — showing it shifts nothing')
+eq(rule('.sc-tags:hover'), '', 'the strip has no hover rule any more (that is what used to jitter)')
 // 连线必须是看得见的颜色：--dsw-alias-border-l2 是 12% 白，画成线等于全透明。
 const edgeRule = rule('.sc-edge')
 has(edgeRule, 'stroke:var(--dsw-alias-label-secondary)', 'edges use the secondary label colour, not a 12%-alpha border colour')
@@ -959,6 +981,188 @@ await tick()
 const yAfter = edgeStartXY()
 eq(yAfter.x, yDuring.x, 'dropping it does not jump the line somewhere else')
 eq(yAfter.y, yDuring.y, 'nor vertically')
+
+// ── Z. auto-arrange leaves room for the option column ───────────────────────
+// 分歧卡片右边那列选项**也算它占的地方**（184 的卡片 + 14 的间距 + 170 的列 = 368）。
+// 自动排列原来只按卡片宽度让位（184 + 52），选项列于是压在下一层卡片身上（用户报的
+// 「自动排列会重叠」）。但让位**不能反过来挪卡片**：上一版把选项列的高度折进卡片的
+// 占位里，卡片在占位里居中，结果同层的分歧卡片比别的卡片低一截（用户报的「默认不居中，
+// 因为计算高度的时候把后面的选项也计算上了」）。现在的规矩：
+//   卡片的位置只由卡片自己决定；选项列溢出的那部分，只体现在两张卡片之间的间距上。
+console.log('\nZ. auto-arrange leaves room for the option column')
+const addBtnOf = (key) => subtreeOf(cardNodeOf(key)).filter((n) => n.props && String(n.props.className).indexOf('sc-choiceadd') !== -1)[0]
+const arrange = async () => {
+  view.click(view.findAll('sc-btn').filter((n) => view.textOf(n) === '自动排列')[0])
+  await tick()
+  await tick()
+}
+const cardPlaces = () => Object.keys(JSON.parse(files[GRAPH]).nodes).map((k) => {
+  const n = cardNodeOf(k)
+  return n ? { k: k, x: Number(n.props.style.left), y: Number(n.props.style.top) } : null
+}).filter(Boolean)
+// ① 先按原样（2 个选项）排一次
+await arrange()
+const zPlaces0 = cardPlaces()
+const zY0 = zPlaces0.filter((p) => p.k === N3)[0].y
+const zX = zPlaces0.filter((p) => p.k === N3)[0].x
+const zNext0 = zPlaces0.filter((p) => p.x === zX && p.y > zY0).sort((a, b) => a.y - b.y)[0]
+ok(!!zNext0, 'there is a card below it on the same column', zNext0)
+// ② 把选项加到 8 个（选项列 310 高，卡片才 80），再排一次
+for (let i = 0; i < 6; i++) {
+  view.click(addBtnOf(N3))
+  await tick()
+}
+eq((JSON.parse(files[GRAPH]).nodes[N3].choices || []).length, 8, 'the branch node now has eight options')
+await arrange()
+const zPlaces1 = cardPlaces()
+const zN3card = zPlaces1.filter((p) => p.k === N3)[0]
+ok(zN3card.y === zY0, 'adding options never moves the card itself', [zY0, zN3card.y])
+const zNext1 = zPlaces1.filter((p) => p.x === zX && p.y > zN3card.y).sort((a, b) => a.y - b.y)[0]
+ok(zNext1.y > zNext0.y, 'but the card under it is pushed down by the longer option column', [zNext0.y, zNext1.y])
+const gZ = JSON.parse(files[GRAPH])
+const OPT_COL_W = 14 + 170
+const footprint = (key) => {
+  const node = cardNodeOf(key)
+  if (!node) return null
+  const st = node.props.style
+  const h = Number(st.height)
+  const rec = gZ.nodes[key] || {}
+  const n = node.props['data-type'] === 'node' && rec.mode === 'branch' ? (rec.choices || []).length : 0
+  // 选项列 = n 行 30px + (n-1) 个 5px 间距 + 5px 间距 + 30px 的「＋ 选项」，
+  // 整列相对卡片上下居中，所以比卡片高的部分上下各溢一半。
+  const colH = n * 30 + Math.max(0, n - 1) * 5 + 5 + 30
+  const over = n ? Math.max(0, Math.ceil((colH - h) / 2)) : 0
+  return {
+    key: key,
+    x: Number(st.left),
+    y: Number(st.top),          // 卡片自己的位置：绝不因为选项列被挪
+    top: Number(st.top) - over, // 连同溢出的选项列，整块的顶
+    w: n ? Number(st.width) + OPT_COL_W : Number(st.width),
+    h: h + over * 2,
+  }
+}
+const places = Object.keys(gZ.nodes).map(footprint).filter(Boolean)
+ok(places.length >= 3, 'the arrangement placed the cards', places.length)
+const overlaps = []
+for (let i = 0; i < places.length; i++) {
+  for (let j = i + 1; j < places.length; j++) {
+    const a = places[i]
+    const b = places[j]
+    if (a.x < b.x + b.w && a.x + a.w > b.x && a.top < b.top + b.h && a.top + a.h > b.top) overlaps.push(a.key + ' × ' + b.key)
+  }
+}
+eq(overlaps.length, 0, 'no two cards overlap once the option columns are counted', overlaps)
+const zN3 = places.filter((p) => p.key === N3)[0]
+ok(!!zN3 && zN3.w >= 184 + OPT_COL_W, 'the branch node makes room for its option column', zN3 && zN3.w)
+// 卡片自己还得落在整数像素上（半像素的圆点看着就不圆）
+ok(places.every((p) => Number.isInteger(p.y)), 'every card still lands on a whole pixel', places.filter((p) => !Number.isInteger(p.y)).map((p) => p.key))
+
+// ── AA. 连线的名字：平时线上什么都不显示，点线才浮出输入框 ────────────────────
+// 上一版把「连线」这个提示挂在每条线上，用户不要：不选中的时候直接隐藏。
+// 现在点一下某条线，那条线上才出现输入框；回车 / 点别处保存，Esc 放弃。
+// 另外，标签也绝不能塞进连线的 SVG 里 —— 浏览器不渲染 SVG 里的 HTML 元素，
+// 它会是 0×0、看不见也点不到（无头渲染器不认命名空间，静态 HTML 又会被解析器把 div
+// 弹出 svg，两边都看不出这个坑，所以这里顺着渲染树找「有没有标签挂在 svg 底下」）。
+console.log('\nAA. a line shows nothing until you click it')
+const labelsUnderSvg = function () {
+  const bad = []
+  const visit = (n, inSvg) => {
+    if (!n) return
+    const now = inSvg || (n.kind === 'host' && String(n.tag).toLowerCase() === 'svg')
+    if (n.kind === 'host' && now && String(n.props.className || '').indexOf('sc-elabel') !== -1) bad.push(n)
+    if (n.children) for (const c of n.children) visit(c, now)
+  }
+  visit(view.tree(), false)
+  return bad.length
+}
+eq(labelsUnderSvg(), 0, 'no edge label lives inside the <svg> (the browser would draw it as nothing at all)')
+eq(view.findAll('sc-elabel').length, 1, 'only the line that already has a name shows anything')
+eq(view.textOf(view.findAll('sc-elabel')[0]), '顺流而下', 'and it shows that name')
+const lineHits = view.findAll('sc-edgehit')
+ok(lineHits.length >= 2, 'the canvas has lines to name', lineHits.length)
+const unnamed = lineHits.filter((n) => n.props['data-echoice'] !== 'nope' && n.props['data-edge'] !== N1 + '->' + N2)[0]
+ok(!!unnamed, 'there is an unnamed line to work with')
+const edgesBefore = JSON.parse(files[GRAPH]).edges.length
+view.click(unnamed)
+await tick()
+let nameInput = view.findMaybe('sc-elabeledit')
+ok(!!nameInput, 'clicking a line puts an input box on it')
+eq(nameInput && nameInput.props['data-edge'], unnamed.props['data-edge'], 'and the input belongs to that line')
+eq(nameInput && nameInput.props.value, '', 'it starts empty on a line that had no name')
+eq(view.findMaybe('sc-modal'), null, 'no dialog in the middle — the name is edited on the line itself')
+view.fire(nameInput, 'onChange', { target: { value: '若答应' } })
+await tick()
+// 重新取一次节点：harness 里 setState 之后旧节点还是上一帧的 props（闭包里的值也是旧的）
+nameInput = view.findMaybe('sc-elabeledit')
+view.fire(nameInput, 'onKeyDown', { key: 'Enter' })
+await tick()
+await tick()
+const gAA = JSON.parse(files[GRAPH])
+eq(gAA.edges.filter((e) => e.label === '若答应').length, 1, 'Enter writes the name to the graph file')
+eq(gAA.edges.length, edgesBefore, 'renaming does not add or drop a line')
+eq(view.findMaybe('sc-elabeledit'), null, 'the input goes away once it is saved')
+eq(view.findAll('sc-elabel').length, 2, 'now two lines show a name')
+ok(!!view.findAll('sc-elabel').filter((n) => view.textOf(n) === '若答应').length, 'and the new name is on the canvas')
+eq(labelsUnderSvg(), 0, 'the name tag is HTML, outside the SVG')
+const chipOf = (text) => view.findAll('sc-elabel').filter((n) => view.textOf(n) === text)[0]
+// 点名字 → 接着改；Esc = 放弃
+view.click(chipOf('若答应'))
+await tick()
+let input2 = view.findMaybe('sc-elabeledit')
+ok(!!input2, 'clicking a name lets you change it')
+eq(input2 && input2.props.value, '若答应', 'the input starts from the current name')
+view.fire(input2, 'onChange', { target: { value: '若答应（改）' } })
+await tick()
+input2 = view.findMaybe('sc-elabeledit')
+view.fire(input2, 'onKeyDown', { key: 'Escape' })
+await tick()
+eq(JSON.parse(files[GRAPH]).edges.filter((e) => e.label === '若答应（改）').length, 0, 'Esc leaves the graph alone')
+ok(!!chipOf('若答应'), 'and the old name is still on the line')
+// 点到别处（失焦）= 保存
+view.click(chipOf('若答应'))
+await tick()
+let input3 = view.findMaybe('sc-elabeledit')
+view.fire(input3, 'onChange', { target: { value: '若答应（改）' } })
+await tick()
+input3 = view.findMaybe('sc-elabeledit')
+view.fire(input3, 'onBlur', {})
+await tick()
+await tick()
+eq(JSON.parse(files[GRAPH]).edges.filter((e) => e.label === '若答应（改）').length, 1, 'clicking elsewhere saves what you typed')
+// 连线本身也能改名字：右键那条线，菜单里得有重命名（不再是一右键就删线）。
+view.fire(view.findAll('sc-edgehit')[0], 'onContextMenu', { clientX: 300, clientY: 200 })
+await tick()
+const renItem = view.findAll('sc-menuitem').filter((n) => view.textOf(n).indexOf('重命名连线') !== -1)[0]
+ok(!!renItem, 'the line menu offers a rename')
+// 菜单里的「重命名连线…」也走线上那个输入框，不再弹对话框
+view.click(renItem)
+await tick()
+ok(!!view.findMaybe('sc-elabeledit'), 'the menu item reuses the on-line input instead of opening a dialog')
+eq(view.findMaybe('sc-modal'), null, 'no dialog anywhere')
+view.fire(view.findMaybe('sc-elabeledit'), 'onKeyDown', { key: 'Escape' })
+await tick()
+ok(!view.findMaybe('sc-menu'), 'and the menu closed behind it')
+
+// ── AB. 标签条的滑块只在滑动时出现 ───────────────────────────────────────────
+// 用户的要求：不动的时候隐藏，动起来才显现，而且不要两侧的三角箭头。
+// 原生滚动条整个藏掉（也不占位），自己画的那根绝对定位覆盖上去 —— 它出现/消失不参与
+// 布局，所以不会有「悬停改尺寸」那种高频抖。
+console.log('\nAB. the tag strip bar only shows while scrolling')
+view.click(view.findAll('sc-segb').filter((n) => view.textOf(n) === '方片')[0])
+await tick()
+const strip = view.findAll('sc-tags')[0]
+ok(!!strip, 'the grid has a tag strip')
+eq(view.findMaybe('sc-tagbar'), null, 'nothing is drawn on it while it sits still')
+view.el(strip, 'scroll', { target: { scrollWidth: 400, clientWidth: 100, scrollLeft: 150 } })
+await tick()
+ok(!!view.findMaybe('sc-tagbar'), 'scrolling brings the bar up')
+const thumb = view.findMaybe('sc-tagthumb')
+ok(!!thumb, 'with a thumb on it')
+eq(thumb && thumb.props.style.width, '25%', 'the thumb is a quarter of the track when the content is four times as wide', thumb && thumb.props.style.width)
+eq(thumb && thumb.props.style.left, '37.5%', 'scrolled halfway puts the middle of the thumb at the middle of the track', thumb && thumb.props.style.left)
+// 停手 700ms 之后自己消失（这里多等 80ms 免得定时器边界抖动）
+await wait(780)
+eq(view.findMaybe('sc-tagbar'), null, 'and it goes away again shortly after the scrolling stops')
 
 console.log('\n' + (failures === 0 ? 'ALL GREEN' : 'FAILURES: ' + failures) + '  (' + checks + ' checks, ' + view.renderCount() + ' renders)')
 if (failures !== 0) process.exit(1)

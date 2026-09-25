@@ -8,6 +8,9 @@ const CHOICE_W = 170
 const CHOICE_H = 30
 const CHOICE_GAP = 5
 const CHOICE_DX = 14
+// 「＋ 选项」按钮的高度，和 CSS 里 .sc-choiceadd 的 height 是同一个值。
+// 它挂在选项列最下面，算「这张卡占多宽多高」时要一起算进去。
+const CHOICE_ADD_H = 30
 // 出口圆点外缘离卡片边缘的距离：.sc-port 是 16px、偏移 -8px，圆心正落在卡片边上，
 // 所以线从卡片外 8px 处起笔、在卡片外 8px 处收笔，正好贴住圆点外缘。
 const PORT_DX = 8
@@ -19,7 +22,7 @@ const PORT_DX = 8
  * 改 CSS 里的 left/top 时这里必须一起改，测试会盯着两者是否一致。
  */
 const EDGE_PAD = 4000
-const EXPAND_W = 460
+const EXPAND_W = PANEL_W
 const EXPAND_H = 430
 
 function sizeOf(type) {
@@ -68,6 +71,42 @@ function inPoint(rect) {
   return { x: rect.x - PORT_DX, y: rect.y + rect.h / 2 }
 }
 
+/** 分歧节点 = 卡片右侧挂着一列选项的节点。 */
+function isBranchCard(card, rec) {
+  return !!card && card.type === 'node' && ((rec && rec.mode === 'branch') || card.mode === 'branch')
+}
+
+function choiceCountOf(card, rec) {
+  return isBranchCard(card, rec) ? ((rec && rec.choices) || []).length : 0
+}
+
+/**
+ * 一张卡片在自动排列里「占多宽、往上下各溢多少」：
+ *   w    卡片宽度；分歧节点要再加上右侧那列选项（14 的间距 + 170 的列宽）
+ *   h    卡片自己的高度（卡片就摆在 out.y 上，不做任何居中偏移）
+ *   over 选项列比卡片高出来的那一半（整列相对卡片上下居中，所以上下各溢这么多）
+ *
+ * 摆放只用 h，**绝不用 over 去挪卡片** —— 一挪，同层的分歧卡片就比别的卡片低一截
+ * （用户报的「默认不居中，因为计算高度的时候把后面的选项也计算上了」）。
+ * over 只在算「两张卡片之间要空多少」时用：这一张往下溢、下一张往上溢，两者都得让开。
+ */
+function slotOf(card, rec) {
+  const s = sizeOf(card.type)
+  const n = choiceCountOf(card, rec)
+  if (!n) return { w: s.w, h: s.h, over: 0 }
+  const colH = choiceListHeight(n) + CHOICE_GAP + CHOICE_ADD_H
+  return {
+    w: s.w + CHOICE_DX + CHOICE_W,
+    h: s.h,
+    over: Math.max(0, Math.ceil((colH - s.h) / 2)),
+  }
+}
+
+/** 卡片连同它溢出的选项列，整块占的地方（碰撞检测、落位要用）。 */
+function slotBox(rect, slot) {
+  return { x: rect.x, y: rect.y - slot.over, w: slot.w, h: slot.h + slot.over * 2 }
+}
+
 function edgePath(a, b) {
   const dx = Math.max(26, Math.abs(b.x - a.x) * 0.45)
   return 'M' + a.x + ',' + a.y + ' C' + (a.x + dx) + ',' + a.y + ' ' + (b.x - dx) + ',' + b.y + ' ' + b.x + ',' + b.y
@@ -78,7 +117,11 @@ function edgeMid(a, b) {
 }
 
 // 自动排列：分层（最长路径）后逐层纵向铺开；L1 按章节序号，L2 按章节内顺序。
-function autoLayout(keys, rectOf, edges) {
+// slotOf(k) 给出「卡片多高、往上下各溢多少（选项列）、占多宽」。
+// 卡片一律摆在 out[k] = { x, y } 上，不做居中偏移 —— 卡片的位置只由卡片自己决定。
+// 选项列是溢出的，所以只影响**间距**：两张卡片之间要塞得下「上一张往下溢的那半」+
+// 「下一张往上溢的那半」+ 24px 的正常空隙。层与层之间按该层最宽的那块让开。
+function autoLayout(keys, slotOf_, edges) {
   const index = {}
   keys.forEach(function (k, i) { index[k] = i })
   const indeg = {}
@@ -101,18 +144,23 @@ function autoLayout(keys, rectOf, edges) {
     byDepth[d].push(k)
   })
   const out = {}
-  const gapX = 260
+  // 层与层之间的水平空隙（原来是写死的 260，等于「章节卡 208 + 52」）
+  const colGap = 52
   const gapY = 24
   let x = 24
   const levels = Object.keys(byDepth).map(Number).sort(function (a, b) { return a - b })
   for (const d of levels) {
+    const row = byDepth[d]
     let y = 24
-    for (const k of byDepth[d]) {
-      const r = rectOf(k)
-      out[k] = { x: x, y: y }
-      y += r.h + gapY
+    let widest = 0
+    for (let i = 0; i < row.length; i++) {
+      const s = slotOf_(row[i])
+      out[row[i]] = { x: x, y: y }
+      const next = i + 1 < row.length ? slotOf_(row[i + 1]) : null
+      y += s.h + s.over + (next ? next.over : 0) + gapY
+      if (s.w > widest) widest = s.w
     }
-    x += gapX
+    x += widest + colGap
   }
   return out
 }
@@ -227,8 +275,9 @@ function CardView(props) {
   const hasOut = canOut(type)
   const hasIn = canIn(type)
   // 分歧与否也认卡片文件里的 mode：图谱是结构，但 mode 是卡片自己的属性，
-  // cards.py 手写的卡片可能还没被图谱记住。
-  const isBranchNode = type === 'node' && (rec.mode === 'branch' || c.mode === 'branch')
+  // cards.py 手写的卡片可能还没被图谱记住。判定与 slotOf / choiceCountOf 共用一套 ——
+  // 两边要是各判各的，自动排列就会给「看着没有选项列」的卡片留空。
+  const isBranchNode = isBranchCard(c, rec)
   // 正在拉线时：手里这一头是「源」，其它卡片的入口点亮成可落的靶子。
   const isSource = props.linkFrom != null && props.linkFrom === props.cardKey
   const isTarget = !!props.linkLive && !isSource

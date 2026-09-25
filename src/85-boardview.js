@@ -33,6 +33,10 @@ function BoardView(props) {
   const [sel, setSel] = React.useState(null)
   const [link, setLink] = React.useState(null)
   const [menu, setMenu] = React.useState(null)
+  // 连线上右键弹出的菜单（重命名 / 删除）。和卡片菜单分开存，免得互相顶掉。
+  const [edgeMenu, setEdgeMenu] = React.useState(null)
+  // 正在改名字的那条线：{ from, to, choice, value }。空 = 线上什么都不显示。
+  const [rename, setRename] = React.useState(null)
   const [expand, setExpand] = React.useState(null)
   const [drag, setDrag] = React.useState(null)
   const [ghost, setGhost] = React.useState(null)
@@ -350,7 +354,9 @@ function BoardView(props) {
   function onCanvasDown(e) {
     // 空白处：左键（默认）/ 中键 / Alt+左键都拖画布。卡片上的按下不算 —— 那是拖卡片，
     // 事件会冒泡到这里来，得让开，不然一次拖动会被两条路同时接管。
-    const blank = !keyUnder(e.target) && !expand
+    // 连线标签和连线本身也算「不是空白」：点标签是改名字，不是取消选中 + 拖画布。
+    const onEdge = !!(e.target && typeof e.target.getAttribute === 'function' && e.target.getAttribute('data-edge'))
+    const blank = !keyUnder(e.target) && !onEdge && !expand
     if (e.button === 0 && blank) setSel(null)
     if (e.button === 1 || (e.button === 0 && blank)) {
       panRef.current = { px: e.clientX, py: e.clientY, vx: view.x, vy: view.y, s: view.s }
@@ -381,11 +387,25 @@ function BoardView(props) {
     setView({ x: px - ((px - view.x) / view.s) * s2, y: py - ((py - view.y) / view.s) * s2, s: s2 })
   }
 
-  function startLink(e, card, choice) {
-    const k = cardKey(card)
-    const p = toCanvas(e.clientX, e.clientY)
-    linkRef.current = { from: k, choice: choice || '', x: p.x, y: p.y }
-    setLink(linkRef.current)
+  // ── 连线的名字 ─────────────────────────────────────────────────────────────
+  // 平时线上什么都不显示；点一下某条线，那条线上才浮出输入框（用户的要求：
+  // 不选中的时候直接隐藏）。已经起过名字的线，名字一直挂着。
+  function sameEdge(a, b) {
+    return !!a && !!b && a.from === b.from && a.to === b.to && String(a.choice || '') === String(b.choice || '')
+  }
+
+  function startRename(e) {
+    setMenu(null)
+    setEdgeMenu(null)
+    setRename({ from: e.from, to: e.to, choice: e.choice || '', value: e.label || '' })
+  }
+
+  function commitRename() {
+    if (!rename) return
+    const v = String(rename.value || '').trim()
+    const edge = { from: rename.from, to: rename.to, choice: rename.choice }
+    setRename(null)
+    props.onSetEdgeLabel(edge, v)
   }
 
   /** 这根橡皮筋是从哪个选项拉出来的（-1 = 从卡片本身的出口）。 */
@@ -447,14 +467,15 @@ function BoardView(props) {
   // ── 自动排列 ───────────────────────────────────────────────────────────────
   function autoArrange() {
     const keys = scope.map(cardKey)
-    const sizes = {}
-    scope.forEach(function (c) { sizes[cardKey(c)] = sizeOf(c.type) })
-    const out = autoLayout(keys, function (k) { return sizes[k] }, edges)
+    const slots = {}
+    scope.forEach(function (c) { slots[cardKey(c)] = slotOf(c, nodeRec(graph, cardKey(c))) })
+    const out = autoLayout(keys, function (k) { return slots[k] }, edges)
     const next = {
       version: 1, chapters: graph.chapters.slice(), nodes: Object.assign({}, graph.nodes), edges: graph.edges.slice(),
     }
     for (const k of Object.keys(out)) {
       const old = next.nodes[k] || { x: null, y: null, cx: null, cy: null, chapter: '', mode: '', color: '', choices: [] }
+      // 卡片就摆在 out 给的位置上：选项列是溢出的，不参与卡片自己的坐标
       next.nodes[k] = level === 'root'
         ? Object.assign({}, old, { x: out[k].x, y: out[k].y })
         : Object.assign({}, old, { cx: out[k].x, cy: out[k].y, chapter: here.key })
@@ -480,10 +501,14 @@ function BoardView(props) {
 
   function dockTap(card) {
     const key = cardKey(card)
-    const s = sizeOf(card.type)
-    const rectList = Object.keys(rects).filter(function (k) { return rects[k].placed }).map(function (k) { return rects[k] })
-    const spot = autoSpot(rectList, s.w, s.h)
-    placeAt(key, spot.x, spot.y)
+    // 落位也按「卡片 + 溢出的选项列」整块算：分歧节点那列选项不能压到已经摆好的卡片上。
+    const slotOfCard = function (c) { return slotOf(c, nodeRec(graph, cardKey(c))) }
+    const rectList = scope.filter(function (c) { return rects[cardKey(c)].placed }).map(function (c) {
+      return slotBox(rects[cardKey(c)], slotOfCard(c))
+    })
+    const slot = slotOfCard(card)
+    const spot = autoSpot(rectList, slot.w, slot.h + slot.over * 2)
+    placeAt(key, spot.x, spot.y + slot.over)
   }
 
   function onDockDown(e, card) {
@@ -623,15 +648,18 @@ function BoardView(props) {
     }
     const p = toCanvas(e.clientX, e.clientY)
     menuPoint.current = { x: Math.round(p.x), y: Math.round(p.y) }
+    setEdgeMenu(null)
     setMenu({ x: e.clientX, y: e.clientY, card: null })
   }
 
   function onCardMenu(e, card) {
     setSel(cardKey(card))
+    setEdgeMenu(null)
     setMenu({ x: e.clientX, y: e.clientY, card: card })
   }
 
   useDismiss(function () { setMenu(null) }, !!menu)
+  useDismiss(function () { setEdgeMenu(null) }, !!edgeMenu)
 
   // ── 渲染 ───────────────────────────────────────────────────────────────────
   const stageStyle = {
@@ -643,12 +671,17 @@ function BoardView(props) {
   if (!expand || drag) stageStyle.transition = 'none'
 
   const edgeEls = []
+  // 连线标签**不能**放进 <svg> 里 —— 浏览器不渲染 SVG 里的 HTML 元素，它会是 0×0、
+  // 点不到（用户报的「连线不能编辑名字」就是这个：标签一直画不出来，也就没有可点的
+  // 地方）。这里单独攒一层 HTML，渲染在 svg 之后、卡片之前：压在线上面、在卡片下面。
+  // 静态 HTML 里看不出这个坑（HTML 解析器会把塞进 <g> 的 div 弹出 svg），
+  // 只有 React 那样走 createElementNS 才会中招 —— 所以 tests/visual.mjs 盯着这条。
+  const edgeLabels = []
   for (const e of edges) {
     // liveRect：拖动中的卡片要按它当前被画在哪算，线才会实时跟着走。
     const a = liveRect(e.from)
     const b = liveRect(e.to)
     if (!a || !b || !a.placed || !b.placed) continue
-    const fromCard = scope.filter(function (c) { return cardKey(c) === e.from })[0]
     let ci = -1
     let ccount = 0
     if (e.choice) {
@@ -658,19 +691,61 @@ function BoardView(props) {
     }
     const pa = outPoint(a, ci, ccount)
     const pb = inPoint(b)
-    const on = sel === e.from || sel === e.to
+    const on = sel === e.from || sel === e.to || sameEdge(rename, e)
     const d = edgePath(pa, pb)
-    edgeEls.push(React.createElement('g', { key: e.from + '->' + e.to + ':' + (e.choice || '') },
-      React.createElement('path', { className: 'sc-edgehit', d: d, 'data-edge': e.from + '->' + e.to, onContextMenu: function (ev) { ev.preventDefault(); ev.stopPropagation(); removeEdge(e.from, e.to, e.choice) }, title: '右键删除这条连线' }),
+    // React 的 key 要连选项一起带上：同一个分歧节点的两个选项可以通向同一张卡，
+    // 只按「起点->终点」编号会撞车。data-edge 保持「起点->终点」（一条线一对端点）。
+    const ekey = e.from + '->' + e.to + ':' + (e.choice || '')
+    const epair = e.from + '->' + e.to
+    const editing = sameEdge(rename, e)
+    edgeEls.push(React.createElement('g', { key: ekey },
+      React.createElement('path', {
+        className: 'sc-edgehit', d: d, 'data-edge': epair, 'data-echoice': e.choice || '',
+        onContextMenu: function (ev) {
+          ev.preventDefault(); ev.stopPropagation()
+          setMenu(null)
+          setEdgeMenu({ x: ev.clientX, y: ev.clientY, edge: e })
+        },
+        // 点线就改名字：平时线上什么都没有，点哪条线，哪条线上才浮出输入框
+        // （用户的要求：不选中的时候直接隐藏）。回车 / 点别处保存，Esc 放弃。
+        onClick: function (ev) { ev.stopPropagation(); startRename(e) },
+        title: '点一下给这条连线起名字，右键重命名 / 删除',
+      }),
       React.createElement('path', { className: 'sc-edge' + (on ? ' on' : ''), d: d, markerEnd: 'url(#sc-arrow' + (on ? '-on' : '') + ')' })
     ))
     const mid = edgeMid(pa, pb)
-    edgeEls.push(React.createElement('div', {
-      key: 'lbl' + e.from + e.to + (e.choice || ''),
-      className: 'sc-elabel' + (on ? ' on' : '') + (e.label ? '' : ' empty'),
-      style: { left: mid.x, top: mid.y },
-      onClick: function () { props.onRenameEdge(e) },
-    }, e.label || '连线'))
+    // 已经起过名字的线，名字一直挂在线上（不然起名字就没意义了）；没名字的什么都不显示。
+    if (e.label && !editing) {
+      edgeLabels.push(React.createElement('div', {
+        key: 'lbl' + ekey,
+        className: 'sc-elabel' + (on ? ' on' : ''),
+        style: { left: mid.x, top: mid.y },
+        'data-edge': epair, 'data-echoice': e.choice || '',
+        title: '点一下改名字：' + e.label,
+        onClick: function (ev) { ev.stopPropagation(); startRename(e) },
+      }, e.label))
+    }
+    if (editing) {
+      edgeLabels.push(React.createElement('input', {
+        key: 'edt' + ekey,
+        className: 'sc-elabel sc-elabeledit',
+        style: { left: mid.x, top: mid.y },
+        'data-edge': epair, 'data-echoice': e.choice || '',
+        value: rename.value,
+        autoFocus: true,
+        placeholder: '连线名字',
+        onPointerDown: function (ev) { ev.stopPropagation() },
+        onClick: function (ev) { ev.stopPropagation() },
+        onChange: function (ev) { setRename(Object.assign({}, rename, { value: ev.target.value })) },
+        onBlur: function () { commitRename() },
+        onKeyDown: function (ev) {
+          // 画布上的快捷键（Delete / 空格 / Ctrl+V）不能在打字时抢走按键
+          ev.stopPropagation()
+          if (ev.key === 'Enter') commitRename()
+          else if (ev.key === 'Escape') setRename(null)
+        },
+      }))
+    }
   }
 
   const cardEls = scope.map(function (c) {
@@ -835,6 +910,9 @@ function BoardView(props) {
             })
           )
         ) : null,
+        // 连线标签是 HTML（见上面的注释）：挂在 .sc-stage 里，画布坐标直接当 left/top 用，
+        // 跟着整块画布一起平移缩放。
+        edgeLabels,
         cardEls
       ),
       scrim,
@@ -855,6 +933,7 @@ function BoardView(props) {
         : '下级：排本章节的情节顺序（双击卡片展开）'),
       React.createElement('span', null, '· 空白处左键拖动平移 · 滚轮缩放（Shift/Alt+滚轮左右上下）'),
       React.createElement('span', null, '· 右键空白处新建 / 粘贴'),
+      React.createElement('span', null, '· 点连线给它起名字（右键改名 / 删线）'),
       React.createElement('span', { className: 'sp' }),
       React.createElement('button', {
         className: 'sc-btn', title: '按连线分层，同层再按时间排',
@@ -867,6 +946,18 @@ function BoardView(props) {
       )
     ),
     menu ? MenuBackdrop({ onClose: function () { setMenu(null) } }) : null,
+    edgeMenu ? MenuBackdrop({ onClose: function () { setEdgeMenu(null) } }) : null,
+    edgeMenu ? MenuList({
+      x: edgeMenu.x, y: edgeMenu.y, color: '',
+      items: [
+        { key: 'ren', label: '重命名连线…', onPick: function () { startRename(edgeMenu.edge) } },
+        { sep: true },
+        { key: 'del', label: '删除这条连线', danger: true, onPick: function () { removeEdge(edgeMenu.edge.from, edgeMenu.edge.to, edgeMenu.edge.choice) } },
+      ],
+      swatches: props.swatches, onEditSwatches: props.onEditSwatches,
+      onColor: function () {},
+      onClose: function () { setEdgeMenu(null) },
+    }) : null,
     menu ? (menu.card
       ? MenuList({
         x: menu.x, y: menu.y, items: menuItems(menu.card),
