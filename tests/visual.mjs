@@ -430,8 +430,13 @@ function sceneMarkup(scene) {
     // DOM 顺序照 85-boardview 的真实渲染顺序：分组背景 → 卡片 → 方框 → 文本框。
     const groupBg = '<div class="sc-groupbg" data-group="g1" style="left:40px;top:130px;width:320px;height:170px"></div>'
     const nodeCard = '<div class="sc-card" data-key="card/node-n1.md" data-type="node" style="left:400px;top:150px;width:156px;height:112px">' +
-      '<div class="sc-cardrow"><span class="sc-cardname">节点一</span><span class="sc-cardwhen">第4天</span></div>' +
-      '<div class="sc-cardsum">节点的简介</div></div>'
+      '<div class="sc-cardrow"><span class="sc-cardname">节点一</span></div>' +
+      // 名字与时间分两行（用户的要求），右下角带缩放手柄
+      '<div class="sc-cardwhen sc-cardwhenline">第4天</div>' +
+      '<div class="sc-cardsum">节点的简介</div>' +
+      '<div class="sc-cardgrip"></div></div>'
+    // 拖动时的对齐辅助线：1px 细线，铺满画布
+    const guide = '<div class="sc-guide sc-guidev" data-guide="v" style="left:260px"></div>'
     const boxRect = '<div class="sc-obj sc-objrect" data-key="obj/r1" data-obj="rect" style="left:60px;top:150px;width:220px;height:110px;--sc-accent:#3FA46A">' +
       '<div class="sc-objgrip"></div></div>'
     const boxText = '<div class="sc-obj sc-objtext dye" data-key="obj/t1" data-obj="text" style="left:80px;top:175px;width:200px;height:64px;--sc-accent:#8EB2FC">' +
@@ -445,7 +450,7 @@ function sceneMarkup(scene) {
       '<span class="sc-boardtip">100%</span>' +
       '</div>' +
       '<div class="sc-stage" style="transform:translate(24px,64px) scale(1)">' +
-      '<div class="sc-dots"></div>' + groupBg + nodeCard + boxRect + boxText +
+      '<div class="sc-dots"></div>' + guide + groupBg + nodeCard + boxRect + boxText +
       '</div>' +
       '<div class="sc-status" style="position:absolute;left:0;right:0;bottom:0;z-index:50">' +
       '<span>下级：排本章节的情节顺序（双击卡片展开）</span><span class="sp"></span>' +
@@ -907,6 +912,25 @@ window.__probeAll = function () {
     const clsOf = function (el) { return el ? String(el.className || '') : '' }
     return { onText: clsOf(onText), onRect: clsOf(onRect) }
   })()
+  // 卡片那条：时间是不是单独一行、右下角有没有缩放手柄、对齐辅助线是不是细线
+  out.cardBits = (function () {
+    const c = document.querySelector('.sc-card')
+    if (!c) return null
+    const when = c.querySelector('.sc-cardwhenline')
+    const row = c.querySelector('.sc-cardrow')
+    const grip = c.querySelector('.sc-cardgrip')
+    const gd = document.querySelector('.sc-guide')
+    const gcs = gd ? getComputedStyle(gd) : null
+    return {
+      whenText: when ? when.textContent : '',
+      rowText: row ? row.textContent : '',
+      whenBelowRow: !!(when && row && when.getBoundingClientRect().top >= row.getBoundingClientRect().bottom - 1),
+      grip: grip
+        ? { w: Math.round(grip.getBoundingClientRect().width), cursor: getComputedStyle(grip).cursor }
+        : null,
+      guide: gd ? { w: Math.round(gd.getBoundingClientRect().width), pointer: gcs.pointerEvents } : null,
+    }
+  })()
   out.bodyScroll = [document.documentElement.scrollWidth, window.innerWidth]
   return out
 }
@@ -1254,6 +1278,21 @@ function checkScene(scene, p) {
     else {
       if (String(p.overlap.onText).indexOf('sc-obj') === -1) errs.push('文本框中心摸到的不是文本框：' + p.overlap.onText)
       if (String(p.overlap.onRect).indexOf('sc-objrect') === -1) errs.push('方框露出来的那条边摸到的不是方框：' + p.overlap.onRect)
+    }
+    // 卡片那条：时间单独一行、右下角有缩放手柄、对齐辅助线是 1px 细线
+    const cb = p.cardBits
+    if (!cb) errs.push('这一幕里没有卡片')
+    else {
+      if (cb.whenText !== '第4天') errs.push('时间那一行没渲染出来：' + JSON.stringify(cb.whenText))
+      if (String(cb.rowText).indexOf('第4天') !== -1) errs.push('时间还挤在标题那一行里：' + JSON.stringify(cb.rowText))
+      if (!cb.whenBelowRow) errs.push('时间没有排在标题下面')
+      if (!cb.grip) errs.push('卡片右下角没有缩放手柄')
+      else if (cb.grip.w !== 16 || cb.grip.cursor !== 'nwse-resize') errs.push('卡片缩放手柄不对：' + JSON.stringify(cb.grip))
+      if (!cb.guide) errs.push('没找到对齐辅助线')
+      else {
+        if (cb.guide.w > 2) errs.push('对齐辅助线不是 1px 细线：' + cb.guide.w)
+        if (cb.guide.pointer !== 'none') errs.push('对齐辅助线吃点击了：' + cb.guide.pointer)
+      }
     }
     if (p.bodyScroll && p.bodyScroll[0] > p.bodyScroll[1]) errs.push('这一幕把页面撑出横向滚动条了')
   }

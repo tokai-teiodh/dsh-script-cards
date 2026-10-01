@@ -40,6 +40,37 @@ function canIn(type) { return String(type) !== 'condition' }
 
 function cardKey(c) { return (c.kind === 'archive' ? 'archive/' : 'card/') + c.file }
 
+// 卡片尺寸的上下限（用户要「可以改卡片高度和宽度」）：宽度按两行标题排得下算，
+// 高度按至少放得下一行标题 + 一行时间 + 两行简介算。默认尺寸在 80-board.js。
+const CARD_SIZE_MIN = { w: 110, h: 72 }
+const CARD_SIZE_MAX = { w: 640, h: 560 }
+
+function clampSize(v, lo, hi) {
+  const n = Math.round(Number(v))
+  if (!isFinite(n)) return lo
+  return Math.max(lo, Math.min(hi, n))
+}
+
+/**
+ * 图谱里记的自定义尺寸（没记过、或者被「重置为默认大小」清成 null 都返回 null）。
+ * ⚠ 不能只写 `isFinite(Number(v.w))`：`Number(null)` 是 0，会被当成「宽度 0」夹成最小值，
+ * 于是「重置」反而把卡片缩到最小。
+ */
+function customSize(rec) {
+  if (!rec) return null
+  const out = {}
+  const read = function (v, lo, hi) {
+    if (v === null || v === undefined || v === '') return undefined
+    const n = Number(v)
+    return isFinite(n) ? clampSize(n, lo, hi) : undefined
+  }
+  const w = read(rec.w, CARD_SIZE_MIN.w, CARD_SIZE_MAX.w)
+  const h = read(rec.h, CARD_SIZE_MIN.h, CARD_SIZE_MAX.h)
+  if (w !== undefined) out.w = w
+  if (h !== undefined) out.h = h
+  return (out.w === undefined && out.h === undefined) ? null : out
+}
+
 function keyOf(file, kind) { return (kind === 'archive' ? 'archive/' : 'card/') + file }
 
 function cardCode(c) { return String((c && c.code) || '') }
@@ -275,6 +306,14 @@ function normGraph(raw) {
     if (v.mode === 'branch') rec.mode = 'branch'
     if (typeof v.color === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(v.color.trim())) rec.color = v.color.trim()
     if (v.collapsed === true) rec.collapsed = true
+    // 每张卡片可以有自己的宽高（拖右下角手柄改，写进这张卡片的记录）。
+    // 没写＝用这一档卡片的默认尺寸（见 80-board 的 CARD_W / CARD_H）。
+    // 上下限在 customSize 里夹住：手一抖不至于把卡片拉到 1px 或者拉出屏幕。
+    const cs = customSize(v)
+    if (cs) {
+      if (cs.w !== undefined) rec.w = cs.w
+      if (cs.h !== undefined) rec.h = cs.h
+    }
     const choices = []
     if (Array.isArray(v.choices)) {
       for (const ch of v.choices) {

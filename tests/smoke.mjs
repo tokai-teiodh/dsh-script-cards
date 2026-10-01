@@ -2852,13 +2852,14 @@ view.fire(objNodes('rect')[0], 'onPointerDown', { button: 0, clientX: grab.clien
 view.window('pointermove', { clientX: grab.clientX + 50, clientY: grab.clientY + 30, buttons: 1 })
 await tick()
 const rpMid = objRect(rectId)
-eq(rpMid.x - rp0.x, 50, 'the rectangle follows the pointer')
-eq(rpMid.y - rp0.y, 30, 'on both axes')
+// 拖动时会吸附对齐（±6 画布像素），所以「跟手」按容差断言
+ok(Math.abs((rpMid.x - rp0.x) - 50) <= 6, 'the rectangle follows the pointer (within the snap range)', rpMid.x - rp0.x)
+ok(Math.abs((rpMid.y - rp0.y) - 30) <= 6, 'on both axes', rpMid.y - rp0.y)
 view.window('pointerup', { clientX: grab.clientX + 50, clientY: grab.clientY + 30 })
 await tick()
 await tick()
 eq(writesToGraph() - wMove0, 1, 'the drag wrote the graph exactly once')
-eq((objOnDisk(rectId) || {}).x, rp0.x + 50, 'and the new spot is on disk')
+eq((objOnDisk(rectId) || {}).x, rpMid.x, 'and the new spot is on disk')
 
 // ⑤ 右下角手柄缩放（和浮窗同一个手势）
 const wr0 = writesToGraph()
@@ -2956,7 +2957,7 @@ const sp = toClient(solo0.x + 12, solo0.y + 12)
 view.fire(cardOf(PB), 'onPointerDown', { button: 0, altKey: true, clientX: sp.clientX, clientY: sp.clientY })
 view.window('pointermove', { clientX: sp.clientX + 30, clientY: sp.clientY, buttons: 1 })
 await tick()
-eq(cardRectOf(PB).x - solo0.x, 30, 'holding Alt drags only the card you grabbed')
+eq(Math.abs((cardRectOf(PB).x - solo0.x) - 30) <= 6, true, 'holding Alt drags only the card you grabbed')
 eq(cardRectOf(N1).x, other0.x, 'and leaves the rest of the group where it was')
 view.window('pointerup', { clientX: sp.clientX + 30, clientY: sp.clientY })
 await tick()
@@ -2964,7 +2965,7 @@ await tick()
 
 // ⑫ 自动排列：整组当一块，组内相对位置不许被拆开
 const relBefore = (() => { const a = cardRectOf(N1); const b = cardRectOf(PB); return { dx: b.x - a.x, dy: b.y - a.y } })()
-view.click(view.findAll('sc-btn').filter((n) => view.textOf(n) === '自动排列')[0])
+view.click(view.findAll('sc-btn').filter((n) => view.textOf(n).indexOf('自动排列') !== -1)[0])
 await tick()
 await tick()
 const relAfter = (() => { const a = cardRectOf(N1); const b = cardRectOf(PB); return { dx: b.x - a.x, dy: b.y - a.y } })()
@@ -3026,6 +3027,168 @@ await tick()
 await tick()
 eq(objNodes('text').length, 0, 'deleting an object takes it off the canvas')
 ok(!((JSON.parse(files[GRAPH]).objects || {})[CTX_G1] || {})[textId], 'and out of 分支.json')
+
+// ── AW. 卡片改大小 · 拖动对齐 · 自动排列只排选中的几张 · 名字与时间两行 ────────
+// 用户 2026-10-01 的要求：「添加一个可以修改卡片高度和宽度的功能（这个记得要适配自动排列）
+// 同时把时间和卡片名字的显示错开了（也就是写成两行）防止互相重叠现象的出现」，
+// 另外两条：「拖动的时候能不能加个对齐，这样子排起来更好看」「自动排列应该可以只选几个进行自动排列」。
+console.log('\nAW. per-card size, drag snapping, arranging just the selection')
+const subOf = (root) => {
+  const out = []
+  const visit = (n) => { if (!n) return; out.push(n); (n.children || []).forEach(visit) }
+  visit(root)
+  return out
+}
+const clsOf = (n) => String((n.props && n.props.className) || '')
+const gripOf = (k) => subOf(cardNodeOf(k)).filter((n) => clsOf(n).indexOf('sc-cardgrip') !== -1)[0]
+const clearSel = () => {
+  const p = toClient(20, 470)
+  view.fire(view.find('sc-canvas'), 'onPointerDown', { button: 0, clientX: p.clientX, clientY: p.clientY, target: blank })
+  view.window('pointerup', { clientX: p.clientX, clientY: p.clientY })
+}
+const arrangeBtn = () => view.findAll('sc-btn').filter((n) => view.textOf(n).indexOf('自动排列') !== -1)[0]
+
+// ① 名字与时间分两行：时间单独占一行，标题那一行里没有它
+const withWhen = nativeKeys().filter((k) => subOf(cardNodeOf(k)).some((x) => clsOf(x).indexOf('sc-cardwhenline') !== -1))[0]
+ok(!!withWhen, 'a node card shows its time on its own line', nativeKeys())
+const whenLine = subOf(cardNodeOf(withWhen)).filter((x) => clsOf(x).indexOf('sc-cardwhenline') !== -1)[0]
+const titleRow = subOf(cardNodeOf(withWhen)).filter((x) => clsOf(x).indexOf('sc-cardrow') !== -1)[0]
+ok(!!whenLine && !!titleRow, 'both the time line and the title row are there')
+ok(view.textOf(titleRow).indexOf(view.textOf(whenLine)) === -1, 'the title row no longer holds the time', view.textOf(titleRow))
+has(fs.readFileSync('src/80-board.js', 'utf8'), 'sc-cardwhen sc-cardwhenline', 'the source keeps the time on its own line')
+
+// ② 卡片右下角有缩放手柄；拖它改宽高，写进这张卡片的记录
+ok(view.findAll('sc-cardgrip').length >= 3, 'cards carry a resize grip', view.findAll('sc-cardgrip').length)
+const rzKey = nativeKeys().filter((k) => k !== withWhen)[0]
+const rz0 = cardRectOf(rzKey)
+const wrp0 = toClient(rz0.x + rz0.w, rz0.y + rz0.h)
+const wRz0 = writesToGraph()
+view.fire(gripOf(rzKey), 'onPointerDown', { button: 0, clientX: wrp0.clientX, clientY: wrp0.clientY })
+view.window('pointermove', { clientX: wrp0.clientX + 60, clientY: wrp0.clientY + 30, buttons: 1 })
+await tick()
+const rzMid = cardRectOf(rzKey)
+eq(rzMid.w, rz0.w + 60, 'dragging the grip makes the card wider')
+eq(rzMid.h, rz0.h + 30, 'and taller')
+view.window('pointerup', { clientX: wrp0.clientX + 60, clientY: wrp0.clientY + 30 })
+await tick()
+await tick()
+const gRz = JSON.parse(files[GRAPH])
+eq(gRz.nodes[rzKey].w, rz0.w + 60, 'the width is written into that card record')
+eq(gRz.nodes[rzKey].h, rz0.h + 30, 'and so is the height')
+eq(writesToGraph() - wRz0, 1, 'the resize wrote the graph once')
+// 下限夹住：往左上猛拖也不会把卡片缩成一条线
+const rpSmall = toClient(rzMid.x + rzMid.w, rzMid.y + rzMid.h)
+view.fire(gripOf(rzKey), 'onPointerDown', { button: 0, clientX: rpSmall.clientX, clientY: rpSmall.clientY })
+view.window('pointermove', { clientX: rpSmall.clientX - 900, clientY: rpSmall.clientY - 900, buttons: 1 })
+await tick()
+const rzSmall = cardRectOf(rzKey)
+ok(rzSmall.w >= 110 && rzSmall.h >= 72, 'the size is clamped at the low end', rzSmall)
+view.window('pointerup', { clientX: rpSmall.clientX - 900, clientY: rpSmall.clientY - 900 })
+await tick()
+await tick()
+
+// ③ 右键「重置为默认大小」：记录里的 w / h 清掉，卡片回到这一档的默认尺寸
+view.fire(cardNodeOf(rzKey), 'onContextMenu', { clientX: 300, clientY: 300 })
+await tick()
+view.click(pickItem('重置为默认大小'))
+await tick()
+await tick()
+const gReset = JSON.parse(files[GRAPH])
+ok(gReset.nodes[rzKey].w === undefined || gReset.nodes[rzKey].w === null, 'reset clears the custom width', gReset.nodes[rzKey].w)
+eq(cardRectOf(rzKey).w, 156, 'and the card is back to the default width')
+has(fs.readFileSync('src/85-boardview.js', 'utf8'), '重置为默认大小', 'the card menu offers that reset')
+
+// ④ 自动排列按自定义尺寸算占位（用户特意点的「记得要适配自动排列」）
+// 拿「不同层」的两张卡来验：给图谱补一条连线（上游 → 下游）再刷新画布。
+// ⚠ 下游要挑**不在同一个组里**的卡：编过组的成员在排列里是一个单元，内部相对位置不动。
+const upstream = N1
+const follower = nativeKeys().filter((k) => k !== N1 && k !== PB)[0]
+const gLink = JSON.parse(files[GRAPH])
+gLink.edges = (gLink.edges || []).filter((e) => !(e.from === upstream && e.to === follower))
+gLink.edges.push({ from: upstream, to: follower, label: '', choice: '' })
+files[GRAPH] = JSON.stringify(gLink, null, 2)
+view.click(view.findAll('sc-navbtn').filter((n) => n.props.title === '刷新画布')[0])
+await tick()
+await tick()
+clearSel()
+await tick()
+view.click(arrangeBtn())
+await tick()
+await tick()
+const narrowX = cardRectOf(follower).x
+const wk0 = cardRectOf(upstream)
+const wp = toClient(wk0.x + wk0.w, wk0.y + wk0.h)
+view.fire(gripOf(upstream), 'onPointerDown', { button: 0, clientX: wp.clientX, clientY: wp.clientY })
+view.window('pointermove', { clientX: wp.clientX + 200, clientY: wp.clientY, buttons: 1 })
+view.window('pointerup', { clientX: wp.clientX + 200, clientY: wp.clientY })
+await tick()
+await tick()
+eq(cardRectOf(upstream).w, wk0.w + 200, 'the upstream card got much wider')
+clearSel()
+await tick()
+view.click(arrangeBtn())
+await tick()
+await tick()
+ok(cardRectOf(follower).x > narrowX, 'auto-arrange pushes the next level further right for a wider card', [narrowX, cardRectOf(follower).x])
+
+// ⑤ 拖动时对齐吸附：上边缘差 3px → 正好吸上去，并且拖的过程中出现辅助线
+clearSel()
+const anchor = cardRectOf(PB)
+const mover = nativeKeys().filter((k) => k !== PB && k !== upstream)[0]
+const mv0 = cardRectOf(mover)
+const wstart = toClient(mv0.x + 10, mv0.y + 10)
+const dragDx = 40
+const dragDy = anchor.y + 3 - mv0.y
+view.fire(cardNodeOf(mover), 'onPointerDown', { button: 0, clientX: wstart.clientX, clientY: wstart.clientY })
+view.window('pointermove', { clientX: wstart.clientX + dragDx, clientY: wstart.clientY + dragDy, buttons: 1 })
+await tick()
+eq(cardRectOf(mover).y, anchor.y, 'dragging near another card snaps to its top edge')
+ok(view.findAll('sc-guide').length >= 1, 'and an alignment guide shows up while you drag', view.findAll('sc-guide').length)
+view.window('pointerup', { clientX: wstart.clientX + dragDx, clientY: wstart.clientY + dragDy })
+await tick()
+await tick()
+eq(view.findAll('sc-guide').length, 0, 'the guides go away when you let go')
+
+// ⑥ 自动排列只排选中的几张（用户的要求）：层里别的卡片一个都不许动
+const gNow = JSON.parse(files[GRAPH])
+const inGroup = {}
+;(((gNow.groups || {})[CTX_G1]) || []).forEach((g) => g.keys.forEach((k) => { inGroup[k] = true }))
+const free = nativeKeys().filter((k) => !inGroup[k])
+const pickPair = free.length >= 2 ? free.slice(0, 2) : nativeKeys().slice(0, 2)
+const a1 = pickPair[0]
+const a2 = pickPair[1]
+clearSel()
+view.fire(cardNodeOf(a1), 'onContextMenu', { shiftKey: true, clientX: 300, clientY: 300 })
+view.fire(cardNodeOf(a2), 'onContextMenu', { shiftKey: true, clientX: 340, clientY: 300 })
+await tick()
+has(view.text(), '自动排列（选中的 2 张）', 'the arrange button says it will only touch the selection')
+const others = nativeKeys().filter((k) => k !== a1 && k !== a2)
+const posOfKey = (k) => cardRectOf(k).x + ':' + cardRectOf(k).y
+const othersBefore = others.map(posOfKey).join(',')
+// 先把其中一张拖歪（按住 Alt＝只拖这一张，位置离开布局网格）——
+// 不然「排完还正好在原位」，断言等于没测。
+const wBeforeDrag = cardRectOf(a1)
+const wds = toClient(wBeforeDrag.x + 10, wBeforeDrag.y + 10)
+view.fire(cardNodeOf(a1), 'onPointerDown', { button: 0, altKey: true, clientX: wds.clientX, clientY: wds.clientY })
+view.window('pointermove', { clientX: wds.clientX + 90, clientY: wds.clientY + 60, buttons: 1 })
+view.window('pointerup', { clientX: wds.clientX + 90, clientY: wds.clientY + 60 })
+await tick()
+await tick()
+const draggedAway = posOfKey(a1)
+ok(draggedAway !== wBeforeDrag.x + ':' + wBeforeDrag.y, 'the card really moved before the arrange', draggedAway)
+const pairAfterDrag = pickPair.map(posOfKey).join(',')
+view.click(arrangeBtn())
+await tick()
+await tick()
+eq(others.map(posOfKey).join(','), othersBefore, 'cards outside the selection did not move')
+ok(pickPair.map(posOfKey).join(',') !== pairAfterDrag, 'the selected ones were re-arranged', pickPair.map(posOfKey))
+// 批量菜单里也有这一项
+view.fire(cardNodeOf(a1), 'onContextMenu', { clientX: 300, clientY: 300 })
+await tick()
+ok(!!pickItem('自动排列这 2 个'), 'the batch menu can arrange just those two')
+view.fire(view.find('sc-menuback'), 'onMouseDown', { target: {} })
+await tick()
+await tick()
 
 // ⑰ 源码契约：图谱读写两侧都要认得 objects / groups（少一处就是每次落盘都冲掉）
 const apiAV = fs.readFileSync('src/50-api.js', 'utf8')

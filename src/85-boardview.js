@@ -65,6 +65,13 @@ function BoardView(props) {
   const objDragRef = React.useRef(null)
   // 正在就地编辑的文本框：{ id, value }
   const [objEdit, setObjEdit] = React.useState(null)
+  // 正在拖手柄改大小的卡片：{ key, rect:{w,h} }（渲染用它，松手才落盘）
+  const [cardResize, setCardResize] = React.useState(null)
+  const cardResizeRef = React.useRef(null)
+  // 拖动时的对齐辅助线：{ v: [x...], h: [y...] }（只在按住拖动那一瞬间出现）
+  const [guides, setGuides] = React.useState(null)
+  // 吸附范围（画布单位）：比这更远就不吸，免得手感变粘
+  const SNAP = 6
   // 存档卡抽屉：开合 + 筛选词
   const [drawer, setDrawer] = React.useState(false)
   const [drawerQ, setDrawerQ] = React.useState('')
@@ -104,6 +111,10 @@ function BoardView(props) {
   function liveRect(k) {
     const r = rects[k]
     if (!r) return r
+    // 正在拖手柄改大小那张卡：按它当前的尺寸画（松手才写回图谱）
+    if (cardResize && cardResize.key === k) {
+      return { x: r.x, y: r.y, w: cardResize.rect.w, h: cardResize.rect.h, placed: r.placed }
+    }
     // 正在拖 / 缩放的那个独立对象：按它当前的几何画（松手才写回图谱）
     if (objDrag && isObjKey(k) && objDrag.id === objIdOf(k)) {
       return { x: objDrag.rect.x, y: objDrag.rect.y, w: objDrag.rect.w, h: objDrag.rect.h, placed: true }
@@ -160,7 +171,8 @@ function BoardView(props) {
     const k = cardKey(c)
     const rec = nodeRec(graph, k)
     const p = level === 'root' ? { x: rec.x, y: rec.y } : { x: rec.cx, y: rec.cy }
-    const s = sizeOf(c.type)
+    // 每张卡片可以有自己的宽高（图谱里的 rec.w / rec.h），没记就用这一档的默认尺寸
+    const s = cardSizeOf(c, rec)
     rects[k] = { x: p.x === null ? 0 : p.x, y: p.y === null ? 0 : p.y, w: s.w, h: s.h, placed: p.x !== null && p.y !== null }
   })
   // 引用卡也进 rects：拖动 / 框选 / 整组拖动那几套都按「键 → 矩形」干活，引用跟着一起用。
@@ -911,6 +923,64 @@ function BoardView(props) {
     if (e && typeof e.preventDefault === 'function') e.preventDefault()
   }
 
+  // ── 对齐吸附（拖动时） ─────────────────────────────────────────────────────
+  // 用户的原话：「我在想拖动的时候能不能加个对齐，这样子排起来更好看」。
+  // 做法：拿被拖的矩形去和**别的**卡片 / 引用卡 / 独立对象的左中右、上中下比，
+  // 差在 SNAP 以内就吸过去，并在对齐的那条线上画一根辅助线。
+  function snapCandidates(skip) {
+    const out = []
+    const push = function (k) {
+      if (skip[k]) return
+      const r = rects[k]
+      if (!r || !r.placed) return
+      out.push({ x1: r.x, cx: r.x + r.w / 2, x2: r.x + r.w, y1: r.y, cy: r.y + r.h / 2, y2: r.y + r.h })
+    }
+    scope.forEach(function (c) { push(cardKey(c)) })
+    refCards.forEach(function (c) { push(cardKey(c)) })
+    objIds.forEach(function (id) { push(objKey(id)) })
+    return out
+  }
+
+  /** 吸附一个矩形：返回吸完的 x / y 和该画的辅助线（没吸到就原样返回）。 */
+  function snapRect(rect, skip) {
+    const cands = snapCandidates(skip || {})
+    const xs = [rect.x, rect.x + rect.w / 2, rect.x + rect.w]
+    const ys = [rect.y, rect.y + rect.h / 2, rect.y + rect.h]
+    let bx = null
+    let by = null
+    for (const c of cands) {
+      for (const line of [c.x1, c.cx, c.x2]) {
+        for (const mx of xs) {
+          const d = line - mx
+          if (Math.abs(d) <= SNAP && (!bx || Math.abs(d) < Math.abs(bx.d))) bx = { d: d, line: line }
+        }
+      }
+      for (const line of [c.y1, c.cy, c.y2]) {
+        for (const my of ys) {
+          const d = line - my
+          if (Math.abs(d) <= SNAP && (!by || Math.abs(d) < Math.abs(by.d))) by = { d: d, line: line }
+        }
+      }
+    }
+    const out = { x: Math.round(rect.x + (bx ? bx.d : 0)), y: Math.round(rect.y + (by ? by.d : 0)), guides: null }
+    if (bx || by) out.guides = { v: bx ? [Math.round(bx.line)] : [], h: by ? [Math.round(by.line)] : [] }
+    return out
+  }
+
+  /** 几个键的包围盒（用图谱里的原位算，拖动中不受 liveRect 影响）。 */
+  function bboxOf(keys) {
+    let x1 = null, y1 = null, x2 = null, y2 = null
+    for (const k of keys) {
+      const r = rects[k]
+      if (!r) continue
+      if (x1 === null || r.x < x1) x1 = r.x
+      if (y1 === null || r.y < y1) y1 = r.y
+      if (x2 === null || r.x + r.w > x2) x2 = r.x + r.w
+      if (y2 === null || r.y + r.h > y2) y2 = r.y + r.h
+    }
+    return x1 === null ? null : { x: x1, y: y1, w: x2 - x1, h: y2 - y1 }
+  }
+
   // ── 交互：拖动卡片 ─────────────────────────────────────────────────────────
   function onCardDown(e, card) {
     if (e.button !== 0) return
@@ -931,8 +1001,24 @@ function BoardView(props) {
       : ((multi.length > 1 && multi.indexOf(k) !== -1)
         ? multi.slice()
         : ((memberKeys.length > 1) ? memberKeys : [k]))
-    dragRef.current = { key: k, dx: start.x - r.x, dy: start.y - r.y, x: r.x, y: r.y, moved: false, group: group, pos: null }
+    dragRef.current = { key: k, dx: start.x - r.x, dy: start.y - r.y, x: r.x, y: r.y, ox: r.x, oy: r.y, moved: false, group: group, pos: null }
     setDrag({ key: k, x: r.x, y: r.y, pos: null })
+    if (e.currentTarget && typeof e.currentTarget.setPointerCapture === 'function' && e.pointerId !== undefined) {
+      try { e.currentTarget.setPointerCapture(e.pointerId) } catch (err) { /* 忽略 */ }
+    }
+  }
+
+  /** 拖卡片右下角的手柄：改这张卡片的宽高（松手写进图谱）。 */
+  function onCardGripDown(e, card) {
+    if (e.button !== 0) return
+    const k = cardKey(card)
+    const r = rects[k]
+    if (!r) return
+    setSel(k)
+    const p = toCanvas(e.clientX, e.clientY)
+    cardResizeRef.current = {
+      key: k, ox: p.x, oy: p.y, rw: r.w, rh: r.h, moved: false, cur: { w: r.w, h: r.h },
+    }
     if (e.currentTarget && typeof e.currentTarget.setPointerCapture === 'function' && e.pointerId !== undefined) {
       try { e.currentTarget.setPointerCapture(e.pointerId) } catch (err) { /* 忽略 */ }
     }
@@ -978,23 +1064,63 @@ function BoardView(props) {
       }
       return
     }
+    // 拖手柄改卡片大小：几何只认 ref，松手才写回图谱
+    if (cardResizeRef.current) {
+      const d = cardResizeRef.current
+      const p = toCanvas(e.clientX, e.clientY)
+      if (Math.abs(p.x - d.ox) > 2 || Math.abs(p.y - d.oy) > 2) d.moved = true
+      d.cur = {
+        w: clampSize(d.rw + (p.x - d.ox), CARD_SIZE_MIN.w, CARD_SIZE_MAX.w),
+        h: clampSize(d.rh + (p.y - d.oy), CARD_SIZE_MIN.h, CARD_SIZE_MAX.h),
+      }
+      setCardResize({ key: d.key, rect: d.cur })
+      return
+    }
     // 独立对象的拖动 / 缩放：几何只认 ref，松手才写回图谱
     if (objDragRef.current) {
       const d = objDragRef.current
       const p = toCanvas(e.clientX, e.clientY)
       if (Math.abs(p.x - d.ox) > 2 || Math.abs(p.y - d.oy) > 2) d.moved = true
-      d.cur = d.mode === 'resize'
-        ? { x: d.rx, y: d.ry, w: Math.max(OBJ_MIN_W, p.x - d.rx), h: Math.max(OBJ_MIN_H, p.y - d.ry) }
-        : { x: Math.round(d.rx + (p.x - d.ox)), y: Math.round(d.ry + (p.y - d.oy)), w: d.rw, h: d.rh }
+      if (d.mode === 'resize') {
+        d.cur = { x: d.rx, y: d.ry, w: Math.max(OBJ_MIN_W, p.x - d.rx), h: Math.max(OBJ_MIN_H, p.y - d.ry) }
+      } else {
+        const skip = {}
+        skip[objKey(d.id)] = true
+        const s = snapRect({ x: Math.round(d.rx + (p.x - d.ox)), y: Math.round(d.ry + (p.y - d.oy)), w: d.rw, h: d.rh }, skip)
+        d.cur = { x: s.x, y: s.y, w: d.rw, h: d.rh }
+        setGuides(s.guides)
+      }
       setObjDrag({ id: d.id, rect: d.cur })
       return
     }
     if (dragRef.current) {
       const d = dragRef.current
       const p = toCanvas(e.clientX, e.clientY)
-      const x = Math.round(p.x - d.dx)
-      const y = Math.round(p.y - d.dy)
+      let x = Math.round(p.x - d.dx)
+      let y = Math.round(p.y - d.dy)
       d.moved = true
+      // 对齐吸附：单张按自己的矩形吸，整组按整组的包围盒吸（用户要的「拖动时对齐」）
+      const gkeys = (d.group && d.group.length > 1) ? d.group : [d.key]
+      const skip = {}
+      gkeys.forEach(function (gk) { skip[gk] = true })
+      if (gkeys.length > 1) {
+        const bb = bboxOf(gkeys)
+        if (bb) {
+          const moved = { x: bb.x + (x - d.ox), y: bb.y + (y - d.oy), w: bb.w, h: bb.h }
+          const s = snapRect(moved, skip)
+          x += s.x - moved.x
+          y += s.y - moved.y
+          setGuides(s.guides)
+        }
+      } else {
+        const r0 = rects[d.key]
+        if (r0) {
+          const s = snapRect({ x: x, y: y, w: r0.w, h: r0.h }, skip)
+          x = s.x
+          y = s.y
+          setGuides(s.guides)
+        }
+      }
       d.x = x
       d.y = y
       if (d.group && d.group.length > 1) {
@@ -1073,16 +1199,26 @@ function BoardView(props) {
       if (hit.length) setSel(hit[0])
       return
     }
+    if (cardResizeRef.current) {
+      const d = cardResizeRef.current
+      cardResizeRef.current = null
+      setCardResize(null)
+      setGuides(null)
+      if (d.moved) patchRec(d.key, { w: d.cur.w, h: d.cur.h })
+      return
+    }
     if (objDragRef.current) {
       const d = objDragRef.current
       objDragRef.current = null
       setObjDrag(null)
+      setGuides(null)
       if (d.moved) patchObjRect(d.id, d.cur)
       return
     }
     if (dragRef.current) {
       const d = dragRef.current
       dragRef.current = null
+      setGuides(null)
       if (d.moved) {
         if (d.pos) {
           const list = Object.keys(d.pos).map(function (gk) { return { key: gk, x: d.pos[gk].x, y: d.pos[gk].y } })
@@ -1347,7 +1483,12 @@ function BoardView(props) {
   // 只处理本层的**原生**卡：scope 里没有引用卡，所以引用卡既不被挪动、也不参与占位
   // （用户拍板：引用不参与自动排列）。
   function autoArrange() {
-    const keys = scope.map(cardKey)
+    const layer = scope.map(cardKey)
+    // 只排选中的几张（用户的要求）：选中 2 张以上就只排它们，排完还落回原处附近；
+    // 没有选中（或只选了一张）就照旧排整层。
+    const selKeys = layer.filter(function (k) { return multi.indexOf(k) !== -1 })
+    const only = selKeys.length >= 2 ? selKeys : null
+    const keys = only || layer
     const slots = {}
     scope.forEach(function (c) { slots[cardKey(c)] = slotOf(c, nodeRec(graph, cardKey(c))) })
 
@@ -1405,14 +1546,32 @@ function BoardView(props) {
     }).filter(function (e) { return e.from && e.to && e.from !== e.to })
     const out = autoLayout(units.map(function (u) { return u.id }), slotOfUnit, unitEdges)
 
+    // 只排一部分时，把排好的这一块挪回选区原来的位置 —— 否则它会跳到画布左上角，
+    // 看着像「我一排，别的卡片全跑没了」。
+    let shiftX = 0
+    let shiftY = 0
+    if (only) {
+      let minX = null
+      let minY = null
+      for (const id of Object.keys(out)) {
+        if (minX === null || out[id].x < minX) minX = out[id].x
+        if (minY === null || out[id].y < minY) minY = out[id].y
+      }
+      const bb = bboxOf(only)
+      if (bb && minX !== null) {
+        shiftX = Math.round(bb.x - minX)
+        shiftY = Math.round(bb.y - minY)
+      }
+    }
+
     const next = graphWith(graph)
     for (const u of units) {
       const o = out[u.id]
       if (!o) continue
       for (const k of u.keys) {
         const off = boxes[u.id].off[k] || { x: 0, y: 0 }
-        const x = Math.round(o.x + off.x)
-        const y = Math.round(o.y + off.y)
+        const x = Math.round(o.x + off.x + shiftX)
+        const y = Math.round(o.y + off.y + shiftY)
         const old = next.nodes[k] || { x: null, y: null, cx: null, cy: null, chapter: '', mode: '', color: '', choices: [] }
         // 卡片就摆在算出来的位置上：选项列是溢出的，不参与卡片自己的坐标
         next.nodes[k] = level === 'root'
@@ -1421,7 +1580,12 @@ function BoardView(props) {
       }
     }
     props.onGraph(next)
-    setView({ x: 24, y: 20, s: view.s })
+    // 只排一部分时不动视角（不然别的卡片会被挪出视野）
+    if (!only) setView({ x: 24, y: 20, s: view.s })
+    props.onNotice({
+      text: only ? '已重新排列选中的 ' + only.length + ' 张' : '已重新排列这一层',
+      kind: 'info',
+    })
   }
 
   function clearCanvas() {
@@ -1603,6 +1767,7 @@ function BoardView(props) {
         items.push({ key: 'chs', label: '编辑选项列表…', onPick: function () { props.onEditChoices(card) } })
       }
     }
+    items.push({ key: 'size', label: '重置为默认大小', onPick: function () { patchRec(k, { w: null, h: null }) } })
     items.push({ key: 'out', label: '移出画布', hint: 'Delete', onPick: function () { removeFromCanvas(card) } })
     items.push({ key: 'del', label: '删除卡片文件…', danger: true, onPick: function () { props.onDeleteCard(card) } })
     return items
@@ -1640,7 +1805,7 @@ function BoardView(props) {
     items.push({ sep: true })
     items.push({ key: 'ps', label: '粘贴', hint: shortcutHint('粘贴'), disabled: !clip.current, onPick: function () { pasteAt(menuPoint.current) } })
     items.push({ sep: true })
-    items.push({ key: 'auto', label: '自动排列', onPick: autoArrange })
+    items.push({ key: 'auto', label: multi.length >= 2 ? '自动排列（只排选中的 ' + multi.length + ' 张）' : '自动排列', onPick: autoArrange })
     items.push({ key: 'clear', label: '清空画布位置', onPick: clearCanvas })
     items.push({ key: 'fit', label: '缩放归位', hint: shortcutHint('缩放归位'), onPick: function () { setView({ x: 24, y: 20, s: 1 }) } })
     return items
@@ -1672,6 +1837,8 @@ function BoardView(props) {
       items.push({ key: 'ung', label: '取消编组', onPick: function () { ungroup(uniqGroup) } })
     }
     items.push({ key: 'out', label: '移出画布', hint: 'Delete', onPick: function () { removeManyFromCanvas(keys) } })
+    // 选中几张之后最想要的一件事：只把这几个重排一下（用户的要求）
+    items.push({ key: 'auto', label: '自动排列这 ' + n + ' 个', onPick: autoArrange })
     if (objSel.length) {
       items.push({
         key: 'delobj', label: '删除这 ' + objSel.length + ' 个对象', danger: true,
@@ -1853,6 +2020,9 @@ function BoardView(props) {
       linkFrom: link ? link.from : null,
       hotChoice: link && link.from === k ? link.choice : '',
       onCardDown: onCardDown,
+      // 拖右下角改大小（用户要的「可以修改卡片高度和宽度」）
+      resizable: true,
+      onGripDown: onCardGripDown,
       onDouble: function (card) {
         if (card.type === 'chapter') go({ level: 'chapter', key: cardKey(card) })
         else openExpand(card)
@@ -1919,6 +2089,22 @@ function BoardView(props) {
       },
     })
     : null
+
+  // 拖动时的对齐辅助线（用户要的「拖动的时候加个对齐」）：竖线管左右对齐、横线管上下对齐。
+  // 它铺满整块画布（CSS 里用 ±4000 撑开），不吃点击。
+  const guideEls = []
+  if (guides) {
+    for (const gx of guides.v || []) {
+      guideEls.push(React.createElement('div', {
+        key: 'gv' + gx, className: 'sc-guide sc-guidev', 'data-guide': 'v', style: { left: gx },
+      }))
+    }
+    for (const gy of guides.h || []) {
+      guideEls.push(React.createElement('div', {
+        key: 'gh' + gy, className: 'sc-guide sc-guideh', 'data-guide': 'h', style: { top: gy },
+      }))
+    }
+  }
 
   const crumb = level === 'root'
     ? [React.createElement('span', { key: 'r', className: 'sc-crumb cur' }, '剧本档案')]
@@ -2156,6 +2342,7 @@ function BoardView(props) {
         refEls,
         rectEls,
         textEls,
+        ...guideEls,
         // 框选的框：画布坐标，跟着画布一起缩放；只画个虚线框，不挡任何点击
         marquee ? React.createElement('div', {
           className: 'sc-marquee',
@@ -2216,9 +2403,12 @@ function BoardView(props) {
       React.createElement('span', null, '· 右键拖框选多张 · shift+右键点卡片加选 · Ctrl+A 全选'),
       React.createElement('span', { className: 'sp' }),
       React.createElement('button', {
-        className: 'sc-btn', title: '按连线分层，同层再按时间排',
+        className: 'sc-btn',
+        title: multi.length >= 2
+          ? '按连线分层重排，**只排选中的这几张**（排完还落回原处附近）'
+          : '按连线分层，同层再按时间排（选中 2 张以上时只排选中的那几张）',
         onClick: autoArrange,
-      }, '自动排列'),
+      }, multi.length >= 2 ? '自动排列（选中的 ' + multi.length + ' 张）' : '自动排列'),
       React.createElement('div', { className: 'sc-zoombar' },
         React.createElement('button', { className: 'sc-navbtn', title: '缩小', onClick: function () { setView({ x: view.x, y: view.y, s: zoomStep(view.s, -1) }) } }, '－'),
         React.createElement('button', { className: 'sc-navbtn', title: '放大', onClick: function () { setView({ x: view.x, y: view.y, s: zoomStep(view.s, 1) }) } }, '＋'),

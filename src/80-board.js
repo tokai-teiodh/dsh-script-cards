@@ -38,6 +38,20 @@ function sizeOf(type) {
   return { w: CARD_W[type] || 184, h: CARD_H[type] || 80 }
 }
 
+/**
+ * 卡片**实际**用多大：每张卡片可以在图谱里记自己的 w / h（拖右下角手柄改的），
+ * 没记就用这一档的默认尺寸。画布渲染、自动排列、落位全走这一个函数 ——
+ * 两处各算各的话，自动排列会按默认尺寸给卡片留位，改过大小的卡片就压成一堆了。
+ */
+function cardSizeOf(card, rec) {
+  const def = sizeOf(card && card.type)
+  const cs = customSize(rec)
+  return {
+    w: cs && cs.w !== undefined ? cs.w : def.w,
+    h: cs && cs.h !== undefined ? cs.h : def.h,
+  }
+}
+
 function cardRect(type, x, y) {
   const s = sizeOf(type)
   return { x: x, y: y, w: s.w, h: s.h }
@@ -100,7 +114,7 @@ function choiceCountOf(card, rec) {
  * over 只在算「两张卡片之间要空多少」时用：这一张往下溢、下一张往上溢，两者都得让开。
  */
 function slotOf(card, rec) {
-  const s = sizeOf(card.type)
+  const s = cardSizeOf(card, rec)
   const n = choiceCountOf(card, rec)
   if (!n) return { w: s.w, h: s.h, over: 0 }
   const colH = choiceListHeight(n) + CHOICE_GAP + CHOICE_ADD_H
@@ -243,9 +257,11 @@ function CardBody(props) {
   const sec = splitSections(c.body)
   return React.createElement('div', { style: { display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 } },
     React.createElement('div', { className: 'sc-cardrow' },
-      React.createElement('span', { className: 'sc-cardname' }, c.title || c.file),
-      c.when ? React.createElement('span', { className: 'sc-cardwhen' }, c.when) : null
+      React.createElement('span', { className: 'sc-cardname' }, c.title || c.file)
     ),
+    // 时间挪到**第二行**（用户的要求）：卡片窄的时候，时间跟名字挤在同一行会互相压，
+    // 名字被省略号截掉、时间还贴着它。
+    c.when ? React.createElement('div', { className: 'sc-cardwhen sc-cardwhenline' }, c.when) : null,
     expanded
       ? React.createElement('div', { className: 'sc-cardbody' },
         BODY_SECTIONS.map(function (name) {
@@ -353,6 +369,16 @@ function CardView(props) {
   if (props.hasDoc) {
     children.push(React.createElement('div', {
       key: 'doc', className: 'sc-docdot', title: '这张卡片有文档（展开后在「文档」页里读）',
+    }))
+  }
+
+  // 拖右下角改这张卡片的大小（用户要的「可以修改卡片高度和宽度」）。只有摆在画布上的
+  // 原生卡有：引用卡不属于这块画布，改大小要回它自己的地方。
+  if (props.resizable) {
+    children.push(React.createElement('div', {
+      key: 'grip', className: 'sc-cardgrip', title: '拖这里改卡片大小（右键菜单里可重置为默认）',
+      onPointerDown: function (e) { e.stopPropagation(); props.onGripDown(e, c) },
+      onDoubleClick: function (e) { e.stopPropagation() },
     }))
   }
 

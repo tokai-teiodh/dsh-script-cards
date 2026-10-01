@@ -162,6 +162,17 @@ const CSS = `
 .sc-cardcode{flex:none;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;font-weight:700;color:var(--sc-accent,var(--dsw-alias-brand-primary));letter-spacing:.02em}
 .sc-cardname{flex:1;min-width:0;font-size:12.5px;font-weight:600;line-height:1.35;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .sc-cardwhen{flex:none;font-size:10.5px;color:var(--dsw-alias-label-secondary);font-family:ui-monospace,Menlo,Consolas,monospace}
+/* 时间单独占一行（用户的要求：卡片窄的时候，时间跟名字挤在同一行会互相压）。
+   放在名字下面、靠左，小字。 */
+.sc-cardwhenline{margin-top:1px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+/* 卡片右下角的缩放手柄（用户要的「可以修改卡片高度和宽度」）：与浮窗、独立对象同一个手势 */
+.sc-cardgrip{position:absolute;right:-4px;bottom:-4px;width:16px;height:16px;cursor:nwse-resize;border-radius:4px;background:var(--dsw-alias-brand-primary);opacity:0;z-index:3}
+.sc-card:hover .sc-cardgrip,.sc-card.on .sc-cardgrip{opacity:.7}
+/* 拖动时的对齐辅助线：跟着画布缩放，只画线、不吃点击。
+   竖线管左右对齐（左/中/右），横线管上下对齐，铺满整块画布（跟 .sc-dots 一样用 ±4000 撑开）。 */
+.sc-guide{position:absolute;z-index:4;background:var(--dsw-alias-brand-primary);opacity:.5;pointer-events:none}
+.sc-guidev{width:1px;top:-4000px;height:8000px}
+.sc-guideh{height:1px;left:-4000px;width:8000px}
 /* 简介钉在卡片下沿：卡片改成竖版（宽 176/156/144、高 120/112/86）之后，标题和标签
    只占上半张，简介留在标题下面会有一大块空 —— auto 上边距把它压到下沿，
    跟方片页的方片是同一个观感。 */
