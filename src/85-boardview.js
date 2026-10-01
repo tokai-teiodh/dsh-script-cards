@@ -2486,13 +2486,17 @@ function BoardView(props) {
       onDockDown: onDockDown, onDockTap: dockTap,
     }),
     React.createElement('div', { className: 'sc-status' },
-      React.createElement('span', null, level === 'root'
-        ? '上级：排列章节（双击章节卡片进入下级）'
-        : '下级：排本章节的情节顺序（双击卡片展开）'),
-      React.createElement('span', null, '· 空白处左键拖动平移 · 滚轮缩放（Shift/Alt+滚轮左右上下）'),
-      React.createElement('span', null, '· 右键空白处新建卡片 / 文本框 / 方框 · 粘贴'),
-      React.createElement('span', null, '· 点连线给它起名字（右键改名 / 删线）'),
-      React.createElement('span', null, '· 右键拖框选多张 · shift+右键点卡片加选 · Ctrl+A 全选'),
+      // 提示整块套一层 .sc-statushelp：它自己最多两行、超出的**从最上面往下藏**（见 CSS），
+      // 面板变窄时状态栏不会再长高把画布挤上去；右下的按钮留在这一层外面，永远不会被裁。
+      React.createElement('div', { className: 'sc-statushelp' },
+        React.createElement('span', null, level === 'root'
+          ? '上级：排列章节（双击章节卡片进入下级）'
+          : '下级：排本章节的情节顺序（双击卡片展开）'),
+        React.createElement('span', null, '· 空白处左键拖动平移 · 滚轮缩放（Shift/Alt+滚轮左右上下）'),
+        React.createElement('span', null, '· 右键空白处新建卡片 / 文本框 / 方框 · 粘贴'),
+        React.createElement('span', null, '· 点连线给它起名字（右键改名 / 删线）'),
+        React.createElement('span', null, '· 右键拖框选多张 · shift+右键点卡片加选 · Ctrl+A 全选')
+      ),
       React.createElement('span', { className: 'sp' }),
       React.createElement('button', {
         className: 'sc-btn',

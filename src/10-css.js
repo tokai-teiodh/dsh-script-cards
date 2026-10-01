@@ -363,6 +363,11 @@ const CSS = `
 
 /* 状态栏 */
 .sc-status{display:flex;align-items:center;gap:10px;padding:4px 12px;border-top:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);font-size:10.5px;color:var(--dsw-alias-label-secondary);flex:none}
+/* 提示文字最多两行：面板一窄，这几句提示就换行，整条状态栏跟着长高、把画布往上挤。
+   现在把高度钉在两行以内，超出来的**从最上面开始往下藏** —— align-content:flex-end
+   让换行后的行往容器底部靠，溢出到顶上的那几行被 overflow:hidden 裁掉；右边那几颗
+   按钮在 .sc-statushelp 外面，所以永远完整可见。 */
+.sc-statushelp{display:flex;flex-wrap:wrap;align-content:flex-end;gap:2px 10px;min-width:0;line-height:1.45;max-height:33px;overflow:hidden}
 .sc-status .sp{flex:1}
 .sc-zoombar{display:flex;align-items:center;gap:4px;flex:none}
 

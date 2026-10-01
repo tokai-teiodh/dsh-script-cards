@@ -3330,6 +3330,29 @@ has(modelAV, 'out.objects = normObjects(raw.objects)', 'the graph reader normali
 has(modelAV, 'out.groups = normGroups(raw.groups)', 'and groups')
 has(fs.readFileSync('src/50-api.js', 'utf8'), 'objects: graph.objects || {}', 'and they survive a graph write through the bridge')
 
+// ── AY. 底部状态栏：最多两行、超出的从最上面藏、按钮不被裁 ──────────────────────
+// 面板一窄，那几句提示就换行，整条状态栏跟着长高、把画布往上挤（他原话：「他在界面
+// 缩短的时候会抬高」）。做法：提示整块套一层能限高又裁溢出的 .sc-statushelp，
+// 按钮留在它外面 —— 里面是被裁掉的那一半，外面才是永远完整的那半。
+// 排版本身要靠真浏览器（AY 只钉结构与源码契约，量高度在 tests/visual.mjs 的
+// statusbar / statuswide 两幕）。
+console.log('\nAY. the status bar stays two lines tall and never clips its buttons')
+const statusBar = view.find('sc-status')
+const statusHelp = view.findMaybe('sc-statushelp')
+ok(!!statusHelp, 'the status bar wraps its hints in .sc-statushelp')
+ok(!!statusHelp && statusBar.children.indexOf(statusHelp) !== -1, 'and that block is a direct child of the status bar')
+const helpText = statusHelp ? view.textOf(statusHelp) : ''
+ok(/上级：|下级：/.test(helpText), 'the level hint lives inside that block', helpText.slice(0, 24))
+ok(helpText.indexOf('Ctrl+A 全选') !== -1, 'and so do the canvas hints')
+ok(helpText.indexOf('自动排列') === -1 && helpText.indexOf('横排') === -1, 'the arrange buttons stay outside the clipped block')
+ok(view.textOf(statusBar).indexOf('自动排列') !== -1, 'but they are still in the status bar')
+ok(view.textOf(statusBar).indexOf('归位') !== -1, 'and the zoom buttons too')
+const cssAY = fs.readFileSync('src/10-css.js', 'utf8')
+const helpRule = (cssAY.match(/\.sc-statushelp\{[^}]*\}/) || [''])[0]
+has(helpRule, 'max-height:33px', 'the hint block is capped at two lines')
+has(helpRule, 'overflow:hidden', 'and clips whatever does not fit')
+has(helpRule, 'align-content:flex-end', 'and keeps the bottom lines (it hides from the top down)')
+
 // 替身自己的 hook 守卫也得是活的，否则「组件被当普通函数调用」这类崩溃在无头测试里
 // 永远看不见 —— 这正是它一路全绿的原因。放在最后跑：它会换掉全局 window。
 console.log('\nAD. the harness refuses a component whose hook count changes')

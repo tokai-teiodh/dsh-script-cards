@@ -17,7 +17,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
@@ -39,9 +39,9 @@ const PROBE = has('probe')
 //   pinned 钉住多开（两个浮窗同时开着）
 //   full   全屏遮罩模式（背景变暗、画布虚化）
 //   doc    展开态的「文档」页签（DocEditor：脏标记 / 已保存 / 路径 / 等宽输入框）
-const SCENES = ['canvas', 'float', 'pinned', 'full', 'doc', 'talk', 'grid', 'refs', 'objects']
+const SCENES = ['canvas', 'float', 'pinned', 'full', 'doc', 'talk', 'grid', 'refs', 'objects', 'statusbar', 'statuswide']
 const SCENE = arg('scene', 'canvas')
-const WIN_SIZE = { canvas: [900, 700], float: [900, 700], pinned: [900, 720], full: [900, 700], doc: [1000, 780], talk: [1060, 780], grid: [900, 700], refs: [980, 620], objects: [900, 620] }
+const WIN_SIZE = { canvas: [900, 700], float: [900, 700], pinned: [900, 720], full: [900, 700], doc: [1000, 780], talk: [1060, 780], grid: [900, 700], refs: [980, 620], objects: [900, 620], statusbar: [360, 620], statuswide: [1180, 620] }
 const OUT = arg('out', '')
 
 // ── 兜底主题色（真值的快照；有 asar 就用 asar 里的） ──────────────────────────
@@ -391,7 +391,50 @@ const TALK_TEXT = [
   '「幻驹山茶」：我带了茶，凉了就不好喝了。',
 ].join('\n')
 
+/**
+ * 底部状态栏那一幕的正文（窄 / 宽两幕共用同一份 markup，只有窗口宽度不同）：
+ * 提示整块套在 .sc-statushelp 里，最多两行，多出来的**从最上面往下藏**；
+ * 右边那几颗按钮在它外面，永远完整可见。
+ * 结构照 85-boardview 的真实渲染顺序：.sc-status > .sc-statushelp(提示…)
+ * + .sp + 自动排列 / 横排 + 缩放条。
+ */
+const STATUS_HINTS = [
+  '下级：排本章节的情节顺序（双击卡片展开）',
+  '· 空白处左键拖动平移 · 滚轮缩放（Shift/Alt+滚轮左右上下）',
+  '· 右键空白处新建卡片 / 文本框 / 方框 · 粘贴',
+  '· 点连线给它起名字（右键改名 / 删线）',
+  '· 右键拖框选多张 · shift+右键点卡片加选 · Ctrl+A 全选',
+]
+
+function statusbarMarkup() {
+  return '<div class="sc-nav" style="position:absolute;left:0;right:0;top:0;z-index:50">' +
+    '<button class="sc-navbtn">‹</button><button class="sc-navbtn">›</button>' +
+    '<button class="sc-navbtn">⌂</button><button class="sc-navbtn">⟳</button>' +
+    '<div class="sc-addr"><span class="sc-crumb">剧本档案</span><span class="sc-crumbsep">/</span>' +
+    '<span class="sc-crumb cur">G1.1 章节甲</span></div>' +
+    '<span class="sc-boardtip">100%</span>' +
+    '</div>' +
+    '<div class="sc-stage" style="transform:translate(24px,64px) scale(1)">' +
+    '<div class="sc-dots"></div>' +
+    card({ x: 20, y: 60, w: 156, h: 112 },
+      '<div class="sc-cardrow"><span class="sc-cardname">节点一</span></div>' +
+      '<div class="sc-cardwhen sc-cardwhenline">第4天</div>' +
+      '<div class="sc-cardsum">窄面板下的样子。</div>') +
+    '</div>' +
+    '<div class="sc-status" style="position:absolute;left:0;right:0;bottom:0;z-index:50">' +
+    '<div class="sc-statushelp">' +
+    STATUS_HINTS.map(function (t) { return '<span>' + t + '</span>' }).join('') +
+    '</div>' +
+    '<span class="sp"></span>' +
+    '<button class="sc-btn">自动排列</button>' +
+    '<button class="sc-btn">横排</button>' +
+    '<div class="sc-zoombar"><button class="sc-navbtn">－</button><button class="sc-navbtn">＋</button>' +
+    '<button class="sc-btn">归位</button></div>' +
+    '</div>'
+}
+
 function sceneMarkup(scene) {
+  if (scene === 'statusbar' || scene === 'statuswide') return statusbarMarkup()
   if (scene === 'refs') {
     // 引用卡那一幕：存档卡抽屉开着 + 画布上一张章节引用、一张人物引用（用角色色）、
     // 一张原生节点卡。引用卡没有连线圆点，左下角一个「引用」角标。
@@ -931,6 +974,36 @@ window.__probeAll = function () {
       guide: gd ? { w: Math.round(gd.getBoundingClientRect().width), h: Math.round(gd.getBoundingClientRect().height), pointer: gcs.pointerEvents } : null,
     }
   })()
+  // 底部状态栏：提示整块最多两行、超出的**从最上面往下藏**；右边的按钮永远完整可见。
+  out.status = (function () {
+    const bar = document.querySelector('.sc-status')
+    if (!bar) return null
+    const help = bar.querySelector('.sc-statushelp')
+    const br = bar.getBoundingClientRect()
+    const hr = help ? help.getBoundingClientRect() : null
+    const box = function (el) {
+      const r = el.getBoundingClientRect()
+      return { top: Math.round(r.top), bottom: Math.round(r.bottom), h: Math.round(r.height) }
+    }
+    return {
+      bar: box(bar),
+      help: help
+        ? Object.assign(box(help), {
+          clientH: help.clientHeight,
+          scrollH: help.scrollHeight,
+          overflow: getComputedStyle(help).overflow,
+        })
+        : null,
+      hints: help
+        ? Array.prototype.map.call(help.querySelectorAll('span'), function (s) {
+          return Object.assign({ text: s.textContent.slice(0, 6) }, box(s))
+        })
+        : [],
+      ctrl: Array.prototype.map.call(bar.querySelectorAll('.sc-btn, .sc-navbtn'), function (b) {
+        return Object.assign({ text: b.textContent }, box(b))
+      }),
+    }
+  })()
   out.bodyScroll = [document.documentElement.scrollWidth, window.innerWidth]
   return out
 }
@@ -939,7 +1012,52 @@ window.__probeAll = function () {
 // ── 无头浏览器：CDP over ws（Node 22+ 自带 WebSocket，零依赖） ────────────────
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
+/** 同步睡一小会儿（cleanup 是同步函数，收尾时要用）。 */
+function nap(ms) {
+  try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms) } catch (e) { /* 忽略 */ }
+}
+
+/**
+ * 开工前扫一遍临时目录：以前杀不干净留下的 profile 目录（一小时前的）一并清掉，
+ * 别让 C 盘上的临时目录一直长。
+ */
+function sweepOldProfiles() {
+  let n = 0
+  try {
+    const dir = os.tmpdir()
+    for (const name of fs.readdirSync(dir)) {
+      if (name.indexOf('dsh-cards-visual-') !== 0) continue
+      const p = path.join(dir, name)
+      try {
+        if (Date.now() - fs.statSync(p).mtimeMs < 3600 * 1000) continue
+        fs.rmSync(p, { recursive: true, force: true })
+        n++
+      } catch (e) { /* 还占着就算了 */ }
+    }
+  } catch (e) { /* 忽略 */ }
+  return n
+}
+
+/**
+ * 一幕到底：起一个无头浏览器、渲染、探测、截图。
+ * 连开十几幕时偶发「devtools 端口没响应」（实测十一幕里第 10 幕栽过一次），
+ * 所以外面套一层重试 —— 这是开发工具，别让它假红。
+ */
 async function shoot(browser, htmlFile, outPng, size, scene) {
+  let last = null
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      return await shootOnce(browser, htmlFile, outPng, size, scene)
+    } catch (e) {
+      last = e
+      console.error('   (第 ' + (attempt + 1) + ' 次起浏览器失败，重试一次：' + (e && e.message) + ')')
+      await sleep(1000)
+    }
+  }
+  throw last
+}
+
+async function shootOnce(browser, htmlFile, outPng, size, scene) {
   const port = 9200 + Math.floor(Math.random() * 400)
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-cards-visual-'))
   const dims = size || [900, 700]
@@ -950,9 +1068,22 @@ async function shoot(browser, htmlFile, outPng, size, scene) {
     'about:blank',
   ], { stdio: 'ignore', detached: true })
 
+  // 收尾：Windows 上 process.kill(-pid)（进程组）不好使，直接子进程一死，渲染 / GPU 那几个
+  // 子进程会变成孤儿继续占着 profile 目录，rmSync 就删不掉 —— 实测临时目录里攒下过 238 个
+  // Edge profile（C 盘本来就紧），而且攒多了新开的那幕会起不来（「devtools 端口没响应」）。
+  // 所以 Windows 上先用 taskkill /T 整棵树，再删；删不掉就等一会儿重试。
   const cleanup = () => {
-    try { process.kill(-child.pid) } catch (e) { try { child.kill() } catch (e2) { /* 忽略 */ } }
-    try { fs.rmSync(profile, { recursive: true, force: true }) } catch (e) { /* 忽略 */ }
+    if (child.pid) {
+      if (process.platform === 'win32') {
+        try { spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' }) } catch (e) { /* 忽略 */ }
+      }
+      try { process.kill(-child.pid) } catch (e) { try { child.kill() } catch (e2) { /* 忽略 */ } }
+    }
+    for (let i = 0; i < 5; i++) {
+      try { fs.rmSync(profile, { recursive: true, force: true }) } catch (e) { /* 文件还被占着 */ }
+      if (!fs.existsSync(profile)) return
+      nap(250)
+    }
   }
 
   let version = null
@@ -1001,7 +1132,9 @@ async function shoot(browser, htmlFile, outPng, size, scene) {
   await send('Runtime.enable')
   const loaded = once('Page.loadEventFired')
   await send('Page.navigate', { url: 'file:///' + htmlFile.replace(/\\/g, '/').replace(/^\//, '') })
-  await loaded
+  // 等 load，但**不能无限等**：浏览器半死的时候这个事件可能永远不来，
+  // 挂在这儿比报错难受得多（实测卡过一次，整轮跑不完）。
+  await Promise.race([loaded, sleep(15000).then(() => { throw new Error('页面 load 事件没等到（15s）') })])
   await sleep(250)
 
   let probe = null
@@ -1032,6 +1165,8 @@ if (!browser) {
 }
 console.log('browser: ' + browser)
 console.log('tokens : ' + (asar || '内置兜底'))
+const swept = sweepOldProfiles()
+if (swept) console.log('清理   : ' + swept + ' 个上一轮没删掉的浏览器 profile')
 
 const scenes = has('scene') ? [SCENE] : SCENES
 let bad = 0
@@ -1095,6 +1230,49 @@ if (bad) process.exit(1)
  */
 function checkScene(scene, p) {
   const errs = []
+  if (scene === 'statusbar' || scene === 'statuswide') {
+    // 面板一窄，底部这几句提示就换行，整条状态栏要是跟着长高，画布就被往上挤
+    // （用户原话：「他在界面缩短的时候会抬高」）。现在提示整块的高度钉在两行以内
+    // （.sc-statushelp 的 max-height:33px，加内边距 8 与上边框 1 → 整条 ≤ 42），
+    // 超出来的**从最上面往下藏**；右边那几颗按钮在它外面，永远完整。
+    const st = p.status
+    const BAR_MAX = 33 + 8 + 1
+    if (!st) errs.push('没有找到底部状态栏')
+    else if (!st.help) errs.push('状态栏里没有 .sc-statushelp（提示整块没套起来，裁不了）')
+    else {
+      if (st.bar.h > BAR_MAX) errs.push('状态栏长到 ' + st.bar.h + 'px 了（两行以内应当是 ≤ ' + BAR_MAX + '）')
+      if (st.help.overflow !== 'hidden') errs.push('提示整块的 overflow 是 ' + st.help.overflow + '，溢出没裁掉')
+      const first = st.hints[0]
+      const last = st.hints[st.hints.length - 1]
+      // ⚠ 不能用 scrollHeight 判断「有没有藏」：溢出在**顶部**，Chromium 把它算不进
+      // scrollHeight（实测 scrollH === clientH）。用每个 span 的 rect 去数。
+      const hidden = st.hints.filter(function (h) { return h.bottom <= st.help.top + 1 }).length
+      if (!(st.help.h >= 15)) errs.push('提示整块高度只有 ' + st.help.h + 'px，一行都没露出来')
+      if (scene === 'statusbar') {
+        // 窄面板：装不下 → 顶上那几行被藏掉，最下面那行完整留着
+        if (!(hidden >= 2)) errs.push('这一幕没测到「藏」：只有 ' + hidden + ' 行提示被藏掉')
+        if (!first || !(first.top < st.help.top - 1)) errs.push('最上面那行提示没被藏掉（应当从最上面开始藏）：' + JSON.stringify(first))
+        if (!last || last.bottom > st.help.bottom + 1) errs.push('最下面那行提示被裁掉了（应当留住最底下那几行）：' + JSON.stringify(last))
+        if (!last || last.top < st.help.top - 1) errs.push('最下面那行提示整行都在可视区外：' + JSON.stringify(last))
+      } else {
+        // 宽面板：装得下 → 一行都不许藏（别为了「藏」把提示永远裁掉）
+        if (hidden !== 0) errs.push('面板够宽却藏了 ' + hidden + ' 行提示')
+        for (const h of st.hints) {
+          if (h.top < st.help.top - 1 || h.bottom > st.help.bottom + 1) errs.push('提示「' + h.text + '」被裁了：' + JSON.stringify(h))
+        }
+      }
+    }
+    if (st) {
+      if (!st.ctrl.length) errs.push('状态栏里没有按钮')
+      for (const c of st.ctrl) {
+        if (c.top < st.bar.top - 1 || c.bottom > st.bar.bottom + 1) {
+          errs.push('状态栏里的「' + c.text + '」被裁掉了一部分：' + JSON.stringify(c) + ' / bar ' + JSON.stringify(st.bar))
+        }
+      }
+    }
+    if (p.bodyScroll && p.bodyScroll[0] > p.bodyScroll[1]) errs.push('这一幕把页面撑出横向滚动条了')
+    return errs
+  }
   if (scene === 'float') {
     if (p.windows.length !== 1) errs.push('浮窗数量 ' + p.windows.length + '，应当是 1')
     const w = p.windows[0] || {}
