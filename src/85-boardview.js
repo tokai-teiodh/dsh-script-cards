@@ -37,7 +37,15 @@ function BoardView(props) {
   const [edgeMenu, setEdgeMenu] = React.useState(null)
   // 正在改名字的那条线：{ from, to, choice, value }。空 = 线上什么都不显示。
   const [rename, setRename] = React.useState(null)
-  const [expand, setExpand] = React.useState(null)
+  // 展开态：从「一个全屏遮罩里的大卡片」改成**一组浮动窗口**（用户拍板）。
+  // 每个窗口：{ key, card, x, y, w, h, mode:'float'|'full', pin, tab:'card'|'doc', open, target }
+  //   x/y/w/h 是**浮动态**的几何（画布坐标，左上角为原点）：切到全屏再切回来，还是要
+  //   回到原来拖到的那个位置，所以 mode 变了也不动它们。
+  //   pin 是「钉住」：没钉住的窗口在切卡片 / 切页 / 关闭时照旧自动收起；钉住的不自动关，
+  //   可以同时开好几个（这是用户明确要的）。
+  const [wins, setWins] = React.useState([])
+  // 正在拖动 / 缩放哪个窗口（只用来关掉过渡动画），真几何一律走 winDragRef。
+  const [winDrag, setWinDrag] = React.useState(null)
   const [drag, setDrag] = React.useState(null)
   const [ghost, setGhost] = React.useState(null)
   const [panOn, setPanOn] = React.useState(false)
@@ -46,12 +54,22 @@ function BoardView(props) {
   // multi = 被框中的卡片键；marquee = 拖动中那个框（画布坐标）。
   const [multi, setMulti] = React.useState([])
   const [marquee, setMarquee] = React.useState(null)
+  // 存档卡抽屉：开合 + 筛选词
+  const [drawer, setDrawer] = React.useState(false)
+  const [drawerQ, setDrawerQ] = React.useState('')
+  const drawerRef = React.useRef(null)
 
   const canvasRef = React.useRef(null)
   const clipRef = React.useRef(null)
   const dragRef = React.useRef(null)
   const linkRef = React.useRef(null)
   const marqueeRef = React.useRef(null)
+  // 窗口拖动 / 缩放：和卡片拖动同一个教训 —— 几何只认 ref，不认 state。
+  // 真浏览器里 pointermove 之后 React 还没重渲染，紧跟着的 pointerup 读到的闭包里
+  // `wins` 还是上一帧的值，于是窗口会「弹回」原处，写进 localStorage 的也是旧几何。
+  const winDragRef = React.useRef(null)
+  // 拖完紧跟的那一次 click 是拖动的尾巴：吃掉它，不然松手正好落在「×」/「图钉」上就误触了。
+  const winSwallow = React.useRef(false)
   // 刚框选完的那一下右键不能弹菜单（Windows 上 contextmenu 有时在 mouseup 之后才派发）
   const justMarqueed = React.useRef(false)
   const clip = React.useRef(null)
@@ -87,10 +105,10 @@ function BoardView(props) {
     setHi(next.length - 1)
     setSel(null)
     setMulti([])
-    closeExpand()
+    closeLoose()
   }
-  function back() { if (hi > 0) { setHi(hi - 1); setSel(null); setMulti([]); closeExpand() } }
-  function fwd() { if (hi < hist.length - 1) { setHi(hi + 1); setSel(null); setMulti([]); closeExpand() } }
+  function back() { if (hi > 0) { setHi(hi - 1); setSel(null); setMulti([]); closeLoose() } }
+  function fwd() { if (hi < hist.length - 1) { setHi(hi + 1); setSel(null); setMulti([]); closeLoose() } }
   function home() { if (here.level !== 'root') go({ level: 'root' }) }
 
   // ── 当前层级的卡片 ─────────────────────────────────────────────────────────
@@ -104,6 +122,16 @@ function BoardView(props) {
   const inScope = {}
   scope.forEach(function (c) { inScope[cardKey(c)] = true })
 
+  // ── 引用卡（「存档卡抽屉」里拖进来的那些） ──────────────────────────────────
+  // 位置存在 分支.json 的 refs[ctx][cardKey]：'top'＝顶层章节画布，否则是那个章节卡的 key。
+  // 引用**不改卡片文件、也不进 nodes**（被引用卡自己的 x/y/cx/cy 一格都不动）。
+  const ctx = level === 'root' ? 'top' : here.key
+  const allCards = props.allCards || cards
+  const cardAny = {}
+  allCards.forEach(function (c) { cardAny[cardKey(c)] = c })
+  const refRecs = refsOf(graph, ctx)
+  const refCards = Object.keys(refRecs).map(function (k) { return cardAny[k] }).filter(Boolean)
+
   const rects = {}
   scope.forEach(function (c) {
     const k = cardKey(c)
@@ -111,6 +139,14 @@ function BoardView(props) {
     const p = level === 'root' ? { x: rec.x, y: rec.y } : { x: rec.cx, y: rec.cy }
     const s = sizeOf(c.type)
     rects[k] = { x: p.x === null ? 0 : p.x, y: p.y === null ? 0 : p.y, w: s.w, h: s.h, placed: p.x !== null && p.y !== null }
+  })
+  // 引用卡也进 rects：拖动 / 框选 / 整组拖动那几套都按「键 → 矩形」干活，引用跟着一起用。
+  // 它们**不进 scope**，所以自动排列看不见它们（用户拍板：不参与自动排列）。
+  refCards.forEach(function (c) {
+    const k = cardKey(c)
+    const rec = refRecs[k]
+    const s = refSizeOf(c.type)
+    rects[k] = { x: rec.x, y: rec.y, w: s.w, h: s.h, placed: true }
   })
 
   const placed = scope.filter(function (c) { return rects[cardKey(c)].placed })
@@ -126,16 +162,18 @@ function BoardView(props) {
   /** 一次给多张卡片写同一个字段（批量染色走它）。同 placeMany：只写一次图谱。 */
   function patchMany(keys, fields) {
     if (!keys || !keys.length) return
-    const next = {
-      version: 1,
-      chapters: graph.chapters.slice(),
-      nodes: Object.assign({}, graph.nodes),
-      edges: graph.edges.slice(),
-    }
+    const next = graphWith(graph)
+    let refs = null
     for (const key of keys) {
+      // 引用卡：染色写进 refs[ctx][key].color，**不碰 nodes**
+      if (refRecs[key]) {
+        refs = patchRefs(refs ? { refs: refs } : graph, ctx, key, Object.assign({ x: refRecs[key].x, y: refRecs[key].y }, fields))
+        continue
+      }
       const old = next.nodes[key] || { x: null, y: null, cx: null, cy: null, chapter: '', mode: '', color: '', choices: [] }
       next.nodes[key] = Object.assign({}, old, fields)
     }
+    if (refs) next.refs = refs
     props.onGraph(next)
   }
 
@@ -146,19 +184,43 @@ function BoardView(props) {
   /**
    * 一次写回多张卡片的位置。**不能**逐张调 placeAt：每次都从这份还没更新的 graph 起算，
    * 后一次会把前一次的位置覆盖掉 —— 整组拖动时看起来只有最后一张动了。
+   * 引用卡的坐标写 refs（保留它自己的手染色），原生卡照旧写 nodes。
    */
   function placeMany(list) {
     if (!list || !list.length) return
-    const next = {
-      version: 1, chapters: graph.chapters.slice(), nodes: Object.assign({}, graph.nodes), edges: graph.edges.slice(),
-    }
+    const next = graphWith(graph)
+    let refs = null
     for (const it of list) {
+      if (refRecs[it.key]) {
+        const rec = { x: it.x, y: it.y }
+        if (refRecs[it.key].color) rec.color = refRecs[it.key].color
+        refs = patchRefs(refs ? { refs: refs } : graph, ctx, it.key, rec)
+        continue
+      }
       const old = next.nodes[it.key] || { x: null, y: null, cx: null, cy: null, chapter: '', mode: '', color: '', choices: [] }
       next.nodes[it.key] = level === 'root'
         ? Object.assign({}, old, { x: it.x, y: it.y })
         : Object.assign({}, old, { cx: it.x, cy: it.y, chapter: here.key })
     }
+    if (refs) next.refs = refs
     props.onGraph(next)
+  }
+
+  /** 把一张卡（或另一层的分支卡）作为**引用**摆到这个画布上：只写 refs，落盘一次。 */
+  function dropRef(card, x, y) {
+    const k = cardKey(card)
+    const old = refRecs[k]
+    const rec = { x: Math.round(x), y: Math.round(y) }
+    if (old && old.color) rec.color = old.color
+    props.onGraph(graphWith(graph, { refs: patchRefs(graph, ctx, k, rec) }))
+  }
+
+  /** 从当前画布移开一张引用卡：只删 refs 里那一条，绝不删卡片文件、绝不删文档。 */
+  function dropRefs(keys) {
+    if (!keys || !keys.length) return
+    let refs = graph.refs
+    for (const k of keys) refs = patchRefs({ refs: refs }, ctx, k, null)
+    props.onGraph(graphWith(graph, { refs: refs }))
   }
 
   function addEdge(from, to, choice) {
@@ -170,10 +232,9 @@ function BoardView(props) {
     const kept = graph.edges.filter(function (e) { return !mine(e) })
     const already = graph.edges.some(function (e) { return mine(e) && e.to === to })
     if (already && kept.length === graph.edges.length) return
-    const next = {
-      version: 1, chapters: graph.chapters.slice(), nodes: Object.assign({}, graph.nodes),
+    const next = graphWith(graph, {
       edges: kept.concat([{ from: from, to: to, label: '', choice: cid }]),
-    }
+    })
     // 从某个选项的出口拉出去的连线，同时把「这一项通向哪」记进选项本身。
     // 不记的话，展开面板里永远显示「还没连到节点」，选项与节点就断成两截。
     if (cid) next.nodes[from] = bindChoice(next.nodes[from], cid, to)
@@ -181,12 +242,11 @@ function BoardView(props) {
   }
 
   function removeEdge(from, to, choice) {
-    const next = {
-      version: 1, chapters: graph.chapters.slice(), nodes: Object.assign({}, graph.nodes),
+    const next = graphWith(graph, {
       edges: graph.edges.filter(function (e) {
         return !(e.from === from && e.to === to && String(e.choice || '') === String(choice || ''))
       }),
-    }
+    })
     if (choice) next.nodes[from] = bindChoice(next.nodes[from], choice, '')
     props.onGraph(next)
   }
@@ -209,9 +269,67 @@ function BoardView(props) {
     patchRec(k, { mode: 'branch', choices: list })
   }
 
-  // ── 展开 / 收起 ────────────────────────────────────────────────────────────
+  // ── 展开 / 收起：浮动窗口 ──────────────────────────────────────────────────
+  //
+  // 用户拍板的三件事：
+  //   ① 默认是**浮动窗口**：拖标题栏移动、右下角手柄缩放，最小 320×220，不许拖出画布；
+  //   ② 标题栏两个开关：图钉（钉住）、全屏 / 浮动；
+  //   ③ 老的全屏遮罩模式不删，作为每个窗口自己的一种模式留着（大段写文档时更专注）。
+  // 位置与模式记在 localStorage（40-store 的 windows），下次展开同一张卡回到原处。
+
+  /** 窗口的最小尺寸。画布比这还窄（侧栏）时以画布为准 —— 否则「最小 320」会把窗口顶出画布。 */
+  function winMin() {
+    const box = canvasBox()
+    return {
+      w: Math.min(WIN_MIN_W, Math.max(140, Math.round(box.width))),
+      h: Math.min(WIN_MIN_H, Math.max(120, Math.round(box.height))),
+    }
+  }
+
+  /** 收进画布可视区：尺寸不小于最小值、也不大于画布；位置不许把窗口拖出可视区。 */
+  function clampWin(x, y, w, h) {
+    const box = canvasBox()
+    const mn = winMin()
+    const W = Math.round(clamp(w, mn.w, Math.max(mn.w, Math.round(box.width))))
+    const H = Math.round(clamp(h, mn.h, Math.max(mn.h, Math.round(box.height))))
+    const X = Math.round(clamp(x, 0, Math.max(0, Math.round(box.width) - W)))
+    const Y = Math.round(clamp(y, 0, Math.max(0, Math.round(box.height) - H)))
+    return { x: X, y: Y, w: W, h: H }
+  }
+
+  /** 全屏遮罩模式的几何：居中一块 460×430（和旧版一模一样），画布窄时就地收进去。 */
+  function fullRect() {
+    const box = canvasBox()
+    return clampWin(box.width / 2 - EXPAND_W / 2, box.height / 2 - EXPAND_H / 2, EXPAND_W, EXPAND_H)
+  }
+
+  /** 第一次展开某张卡时的默认落点：正中一块 460×430。 */
+  function defaultRect() {
+    return fullRect()
+  }
+
+  /** 这张卡上次拖到哪、用的哪种模式（localStorage，整份读改写见 40-store）。 */
+  function storedWin(key) {
+    const all = (props.ui && props.ui.windows) || null
+    const one = all ? all[key] : null
+    return one && typeof one === 'object' ? one : null
+  }
+
+  function storedRect(key) {
+    const one = storedWin(key)
+    if (!one) return null
+    return clampWin(one.x, one.y, one.w, one.h)
+  }
+
+  function isOpen(key) { return wins.some(function (w) { return w.key === key }) }
+
+  function saveWin(key, geo) {
+    if (props.onWindowSave) props.onWindowSave(key, geo)
+  }
+
   function openExpand(card) {
     const k = cardKey(card)
+    if (isOpen(k)) { bringWinFront(k); return }
     const r = rects[k]
     if (!r) return
     const box = canvasBox()
@@ -221,21 +339,225 @@ function BoardView(props) {
     // 连线起笔点、几何断言全都会被这半个像素咬到。
     const tx = Math.round(box.width / 2 - (r.x + r.w / 2) * s)
     const ty = Math.round(box.height / 2 - (r.y + r.h / 2) * s)
-    const from = { left: box.width / 2 - (r.w * s) / 2, top: box.height / 2 - (r.h * s) / 2, width: r.w * s, height: r.h * s }
-    const to = { left: box.width / 2 - EXPAND_W / 2, top: box.height / 2 - EXPAND_H / 2, width: EXPAND_W, height: EXPAND_H }
+    // 起飞点＝卡片被平移到正中之后在屏幕上的那个矩形，落点＝窗口的目标矩形。
+    const from = {
+      x: Math.round(box.width / 2 - (r.w * s) / 2),
+      y: Math.round(box.height / 2 - (r.h * s) / 2),
+      w: Math.round(r.w * s), h: Math.round(r.h * s),
+    }
+    const one = storedWin(k)
+    const mode = one && one.mode === 'full' ? 'full' : 'float'
+    const to = mode === 'full' ? fullRect() : (storedRect(k) || defaultRect())
     setSel(k)
     setView({ x: tx, y: ty, s: s })
-    setExpand({ key: k, card: card, from: from, to: from, open: false })
+    // 钉住的留着，没钉住的收起（「切换卡片就自动收起」这条老行为不丢）
+    // ro＝引用卡：只给只读详情，不挂 CardEditor / DocEditor（用户拍板）。
+    setWins(wins.filter(function (w) { return w.pin }).concat([{
+      key: k, card: card, x: from.x, y: from.y, w: from.w, h: from.h,
+      mode: mode, pin: false, tab: 'card', open: false, target: to,
+      ro: !!refRecs[k],
+    }]))
     setTimeout(function () {
-      setExpand(function (cur) {
-        if (!cur || cur.key !== k) return cur
-        return Object.assign({}, cur, { to: to, open: true })
+      setWins(function (cur) {
+        return cur.map(function (it) {
+          if (it.key !== k || !it.target) return it
+          const t = it.target
+          return Object.assign({}, it, { x: t.x, y: t.y, w: t.w, h: t.h, target: null, open: true })
+        })
       })
     }, 30)
   }
 
-  function closeExpand() {
-    setExpand(null)
+  /** 收起没钉住的窗口（切页 / 切卡片 / Esc 都走它）。钉住的照旧开着。 */
+  function closeLoose() {
+    setWins(wins.filter(function (w) { return w.pin }))
+  }
+
+  function closeWin(key) {
+    setWins(wins.filter(function (w) { return w.key !== key }))
+  }
+
+  function togglePin(key) {
+    setWins(wins.map(function (w) {
+      return w.key === key ? Object.assign({}, w, { pin: !w.pin }) : w
+    }))
+  }
+
+  function toggleMode(key) {
+    const one = wins.filter(function (w) { return w.key === key })[0]
+    if (!one) return
+    const mode = one.mode === 'full' ? 'float' : 'full'
+    setWins(wins.map(function (w) {
+      return w.key === key ? Object.assign({}, w, { mode: mode }) : w
+    }))
+    // 模式记进 localStorage；x/y/w/h 是浮动态的几何，原样留着
+    saveWin(key, { x: one.x, y: one.y, w: one.w, h: one.h, mode: mode })
+  }
+
+  function setWinTab(key, tab) {
+    setWins(wins.map(function (w) {
+      return w.key === key ? Object.assign({}, w, { tab: tab }) : w
+    }))
+  }
+
+  /** 点到哪个窗口，哪个就浮到最上面（多个钉住的窗口叠在一起时才有意义）。 */
+  function bringWinFront(key) {
+    setWins(function (list) {
+      const i = list.findIndex(function (w) { return w.key === key })
+      if (i === -1 || i === list.length - 1) return list
+      const out = list.slice()
+      out.push(out.splice(i, 1)[0])
+      return out
+    })
+  }
+
+  /** 指针是不是落在一个展开的窗口里（画布自己的按下 / 右键都得让开）。 */
+  function insideWindow(target) {
+    let n = target
+    let depth = 0
+    while (n && depth++ < 12) {
+      if (typeof n.closest === 'function') {
+        try { if (n.closest('.sc-expand')) return true } catch (e) { /* 忽略 */ }
+      }
+      const cls = (n.classList && n.classList.contains && n.classList.contains('sc-expand'))
+        ? 'sc-expand'
+        : (n.getAttribute ? String(n.getAttribute('class') || '') : '')
+      if (String(cls).split(/\s+/).indexOf('sc-expand') !== -1) return true
+      n = n.parentNode
+    }
+    return false
+  }
+
+  // ── 存档卡抽屉 ─────────────────────────────────────────────────────────────
+  // 用户拍板：分支页边上挂一个可开合的抽屉，按类型列出**存档族**全部卡片，外加
+  // 「别的级别」那一组（当前画布上本来不显示的分支卡：顶层画布＝全部节点/条件/结果，
+  // 节点画布＝全部章节卡）。从这里按住拖到画布上就是**摆一张引用**。
+  const DRAWER_W = 260
+
+  /** 指针是不是落在抽屉里（抽屉浮在画布上，但它上面的手势不是画布手势）。 */
+  function insideDrawer(target) {
+    let n = target
+    let depth = 0
+    while (n && depth++ < 12) {
+      if (typeof n.closest === 'function') {
+        try { if (n.closest('.sc-drawer')) return true } catch (e) { /* 忽略 */ }
+      }
+      const cls = (n.classList && n.classList.contains && n.classList.contains('sc-drawer'))
+        ? 'sc-drawer'
+        : (n.getAttribute ? String(n.getAttribute('class') || '') : '')
+      if (String(cls).split(/\s+/).indexOf('sc-drawer') !== -1) return true
+      n = n.parentNode
+    }
+    return false
+  }
+
+  /** 抽屉条目按下：左右键都能拖（抽屉里没有别的手势），右键先把浏览器菜单吃掉。 */
+  function onDrawerDown(e, card) {
+    if (e && e.button !== undefined && e.button !== null && e.button !== 0 && e.button !== 2) return
+    if (e && typeof e.stopPropagation === 'function') e.stopPropagation()
+    if (e && e.button === 2 && typeof e.preventDefault === 'function') e.preventDefault()
+    // 只读（桥不可用）时抽屉能看不能拖：按既有口径把原因说出来
+    if (props.api && typeof props.api.canWrite === 'function' && !props.api.canWrite()) {
+      if (props.onNotice) {
+        props.onNotice({
+          text: '只读模式：宿主半边的落盘桥不可用，引用摆不回磁盘。原因：' +
+            (props.api.diagnostic ? props.api.diagnostic() : '未知'),
+          kind: 'error',
+        })
+      }
+      return
+    }
+    drawerRef.current = { card: card, moved: false }
+    setGhost({ x: e.clientX, y: e.clientY, card: card, fromDrawer: true })
+  }
+
+  /** 抽屉的分组（存档卡按类型、别的级别按章节），带筛选。 */
+  function drawerGroups() {
+    const q = String(drawerQ || '').trim().toLowerCase()
+    const hit = function (c) {
+      if (!q) return true
+      return (String(c.title) + ' ' + String(c.summary) + ' ' + String(c.preview) + ' ' + (c.tags || []).join(' ')).toLowerCase().indexOf(q) !== -1
+    }
+    const groups = []
+    const arch = allCards.filter(function (c) { return !isBranchType(c.type) && hit(c) })
+    for (const t of ARCHIVE_ORDER) {
+      const items = arch.filter(function (c) { return c.type === t })
+        .sort(function (a, b) { return String(a.title || '').localeCompare(String(b.title || ''), 'zh') })
+      if (items.length) groups.push({ key: 'a-' + t, label: typeLabel(t), items: items })
+    }
+    if (level === 'root') {
+      // 顶层画布上缺的是「章节里的内容」：按所属章节分组，跟画布上的分组口径一致
+      const need = allCards.filter(function (c) {
+        return (c.type === 'node' || c.type === 'condition' || c.type === 'result') && hit(c)
+      })
+      const byChapter = []
+      for (const ch of chaptersInOrder(cards, graph)) {
+        const items = need.filter(function (c) { return nodeRec(graph, cardKey(c)).chapter === cardKey(ch) })
+          .sort(function (a, b) { return String(a.title || '').localeCompare(String(b.title || ''), 'zh') })
+        if (items.length) byChapter.push({ key: 'c-' + cardKey(ch), label: cardDisplay(ch), items: items })
+      }
+      const orphan = need.filter(function (c) { return !nodeRec(graph, cardKey(c)).chapter })
+      if (orphan.length) byChapter.push({ key: 'c-none', label: '未归属章节', items: orphan })
+      for (const g of byChapter) { g.key = 'l-' + g.key; groups.push(g) }
+    } else {
+      // 节点画布上缺的是「别的章节」：全部章节卡
+      const items = allCards.filter(function (c) { return c.type === 'chapter' && hit(c) })
+        .sort(function (a, b) { return String(a.title || '').localeCompare(String(b.title || ''), 'zh') })
+      if (items.length) groups.push({ key: 'l-chapter', label: '章节', items: items })
+    }
+    return groups
+  }
+
+  /** 抽屉里的一条：按住就能往画布上拖。 */
+  function drawerItem(card, key) {
+    const k = cardKey(card)
+    const accent = refAccent(card, refRecs[k])
+    return React.createElement('div', {
+      key: key, className: 'sc-draweritem', 'data-key': k, title: '按住拖到画布上（引用；不改卡片文件）',
+      onPointerDown: function (e) { onDrawerDown(e, card) },
+      onContextMenu: function (e) { e.preventDefault(); e.stopPropagation() },
+    },
+      React.createElement('span', { className: 'sc-draweritemtitle', style: accent ? { color: accent } : undefined }, cardDisplay(card) || card.file),
+      React.createElement('span', { className: 'sc-draweritemkind' }, typeLabel(card.type))
+    )
+  }
+
+  function onWinDown(e, w) {
+    if (e && e.button !== undefined && e.button !== null && e.button !== 0) return
+    // 自己吃掉，别冒泡到画布：画布会把它当成「空白处按下」→ 取消选中 + 开始平移
+    if (e && typeof e.stopPropagation === 'function') e.stopPropagation()
+    bringWinFront(w.key)
+    // 全屏遮罩模式是固定的一块，不做拖动（它就该钉在正中）
+    if (w.mode === 'full') return
+    const t = e && e.target
+    if (t && typeof t.closest === 'function' && t.closest('button')) return
+    winDragRef.current = {
+      key: w.key, mode: 'move', ox: e.clientX, oy: e.clientY,
+      rx: w.x, ry: w.y, rw: w.w, rh: w.h, cur: null, moved: false,
+    }
+    winSwallow.current = false
+    setWinDrag({ key: w.key, mode: 'move' })
+  }
+
+  function onWinGripDown(e, w) {
+    if (e && e.button !== undefined && e.button !== null && e.button !== 0) return
+    if (e && typeof e.stopPropagation === 'function') e.stopPropagation()
+    bringWinFront(w.key)
+    if (w.mode === 'full') return
+    winDragRef.current = {
+      key: w.key, mode: 'resize', ox: e.clientX, oy: e.clientY,
+      rx: w.x, ry: w.y, rw: w.w, rh: w.h, cur: null, moved: false,
+    }
+    winSwallow.current = false
+    setWinDrag({ key: w.key, mode: 'resize' })
+  }
+
+  /** 拖完那一下 click：吃掉（不然松手正好落在「×」/「图钉」上就会误触）。 */
+  function winClick(e) {
+    if (!winSwallow.current) return
+    winSwallow.current = false
+    if (e && typeof e.stopPropagation === 'function') e.stopPropagation()
+    if (e && typeof e.preventDefault === 'function') e.preventDefault()
   }
 
   // ── 交互：拖动卡片 ─────────────────────────────────────────────────────────
@@ -263,6 +585,25 @@ function BoardView(props) {
   // 而 pointerup 是紧接着派发的 —— 此时闭包里的 `drag` 还是松手前那一帧的值，
   // 于是卡片被写回原位，看起来就是「拖了没写」。ref 永远是刚算出来的那个坐标。
   function movePointers(e) {
+    // 浮动窗口的拖动 / 缩放排在最前：它和画布手势互斥，谁先拿到谁接管。
+    // 几何一律从 ref 里算（那里存的 rx/ry/rw/rh 是按下时的原始值，不会被自己改写），
+    // 再整份写回 state；松手时读 ref、不读 state。
+    const wd = winDragRef.current
+    if (wd) {
+      const dx = (Number(e.clientX) || 0) - wd.ox
+      const dy = (Number(e.clientY) || 0) - wd.oy
+      if (Math.abs(dx) > 2 || Math.abs(dy) > 2) wd.moved = true
+      const r = wd.mode === 'resize'
+        ? clampWin(wd.rx, wd.ry, wd.rw + dx, wd.rh + dy)
+        : clampWin(wd.rx + dx, wd.ry + dy, wd.rw, wd.rh)
+      wd.cur = r
+      setWins(function (list) {
+        return list.map(function (w) {
+          return w.key === wd.key ? Object.assign({}, w, { x: r.x, y: r.y, w: r.w, h: r.h }) : w
+        })
+      })
+      return
+    }
     if (marqueeRef.current) {
       const m = marqueeRef.current
       // 右键已经松开了还在动鼠标（比如中途 pointerup 丢了）就别再画框
@@ -317,9 +658,25 @@ function BoardView(props) {
     if (dockRef.current) {
       setGhost({ x: e.clientX, y: e.clientY, card: dockRef.current.card })
     }
+    if (drawerRef.current) {
+      drawerRef.current.moved = true
+      setGhost({ x: e.clientX, y: e.clientY, card: drawerRef.current.card, fromDrawer: true })
+    }
   }
 
   function upPointers(e) {
+    if (winDragRef.current) {
+      const wd = winDragRef.current
+      winDragRef.current = null
+      setWinDrag(null)
+      if (wd.moved) {
+        // 这一下松手之后的 click 是拖动的尾巴，吃掉它
+        winSwallow.current = true
+        const r = wd.cur || { x: wd.rx, y: wd.ry, w: wd.rw, h: wd.rh }
+        saveWin(wd.key, { x: r.x, y: r.y, w: r.w, h: r.h })
+      }
+      return
+    }
     if (marqueeRef.current) {
       const m = marqueeRef.current
       marqueeRef.current = null
@@ -328,7 +685,8 @@ function BoardView(props) {
       justMarqueed.current = true
       const box = { x: Math.min(m.ox, m.x), y: Math.min(m.oy, m.y), w: Math.abs(m.x - m.ox), h: Math.abs(m.y - m.oy) }
       const hit = []
-      scope.forEach(function (c) {
+      // 引用卡也要能被框进来（用户拍板：批量框选能带上它）
+      scope.concat(refCards).forEach(function (c) {
         const k = cardKey(c)
         const r = rects[k]
         if (!r || !r.placed) return
@@ -353,6 +711,22 @@ function BoardView(props) {
       return
     }
     if (panRef.current) { panRef.current = null; setPanOn(false); return }
+    if (drawerRef.current) {
+      // 从抽屉里拖出来的：落在画布上就摆一张**引用**（只写 refs），落在画布外就取消
+      const d = drawerRef.current
+      drawerRef.current = null
+      setGhost(null)
+      const box = canvasBox()
+      const inside = e.clientX >= box.left && e.clientX <= box.left + box.width && e.clientY >= box.top && e.clientY <= box.top + box.height
+      if (inside) {
+        const p = toCanvas(e.clientX, e.clientY)
+        const s = refSizeOf(d.card.type)
+        dropRef(d.card, p.x - s.w / 2, p.y - s.h / 2)
+        setSel(cardKey(d.card))
+        if (props.onNotice) props.onNotice({ text: '已把「' + (cardDisplay(d.card) || d.card.file) + '」摆到画布上（引用，不改卡片文件）', kind: 'info' })
+      }
+      return
+    }
     if (dockRef.current) {
       const d = dockRef.current
       dockRef.current = null
@@ -441,14 +815,20 @@ function BoardView(props) {
   }
 
   function onCanvasDown(e) {
+    // 浮动窗口 / 抽屉里的按下不是画布手势：不确定这一条的话，点一下文档输入框、
+    // 或者按住抽屉里的一张卡，都会变成「取消选中 + 开始平移整块画布」。
+    if (insideWindow(e.target) || insideDrawer(e.target)) return
+    // 全屏遮罩模式的窗口是「锁住画布」的（老的展开行为）；浮动窗口不锁 ——
+    // 这正是浮动窗口的意义：它开着，画布照样能拖能滚。
+    const blocked = wins.some(function (w) { return w.mode === 'full' })
     // 空白处：左键（默认）/ 中键 / Alt+左键都拖画布。卡片上的按下不算 —— 那是拖卡片，
     // 事件会冒泡到这里来，得让开，不然一次拖动会被两条路同时接管。
     // 连线标签和连线本身也算「不是空白」：点标签是改名字，不是取消选中 + 拖画布。
     const onEdge = !!(e.target && typeof e.target.getAttribute === 'function' && e.target.getAttribute('data-edge'))
-    const blank = !keyUnder(e.target) && !onEdge && !expand
-    // 右键拖 = 框选多张（画布上才有；展开卡片时不介入）。
+    const blank = !keyUnder(e.target) && !onEdge && !blocked
+    // 右键拖 = 框选多张（画布上才有；全屏遮罩时不介入）。
     // 右键**没有**拖动的那一下仍然照旧弹菜单。
-    if (e.button === 2 && !expand) {
+    if (e.button === 2 && !blocked) {
       const p = toCanvas(e.clientX, e.clientY)
       marqueeRef.current = { ox: p.x, oy: p.y, x: p.x, y: p.y, moved: false }
       justMarqueed.current = false
@@ -465,10 +845,16 @@ function BoardView(props) {
   }
 
   function onWheel(e) {
-    // 展开的卡片是一页可以上下滚的内容：指针落在它里面时滚轮归它 —— 既不缩放画布，
-    // 也不能 preventDefault（拦下默认行为它就滚不动了）。用户的要求：
-    // 「点进去卡片之后，滚轮直接接管卡片页面的上滑下滑，不要去管桌布的缩放」。
+    // 浮层自己吃滚轮：展开的卡片是一页可以上下滚的内容，抽屉也是一块可滚的列表 ——
+    // 指针落在它们里面时，滚轮归它们：既不缩放画布，也**不能 preventDefault /
+    // stopPropagation**（拦下默认行为它就滚不动了，用户报的「存档卡没法用滚轮上下滑动」
+    // 就是被这里吃掉的）。用户原话：「当鼠标悬浮在存档卡界面上时，让存档卡来接管
+    // 鼠标滚动的输出」。
+    // 标记用属性 data-wheel="own"，别按类名硬编码：以后新加浮层只要打这个属性。
     const t = e && e.target
+    const own = t && typeof t.closest === 'function' ? t.closest('[data-wheel="own"]') : null
+    if (own) return
+    // 兜底：万一某个浮层还没打上属性，老的类名判断留着
     if (t && typeof t.closest === 'function' && t.closest('.sc-expand')) return
     e.preventDefault()
     // deltaX/deltaY 偶尔缺失（合成事件、老浏览器），缺了就当 0 —— 否则 view 里
@@ -574,14 +960,14 @@ function BoardView(props) {
   }
 
   // ── 自动排列 ───────────────────────────────────────────────────────────────
+  // 只处理本层的**原生**卡：scope 里没有引用卡，所以引用卡既不被挪动、也不参与占位
+  // （用户拍板：引用不参与自动排列）。
   function autoArrange() {
     const keys = scope.map(cardKey)
     const slots = {}
     scope.forEach(function (c) { slots[cardKey(c)] = slotOf(c, nodeRec(graph, cardKey(c))) })
     const out = autoLayout(keys, function (k) { return slots[k] }, edges)
-    const next = {
-      version: 1, chapters: graph.chapters.slice(), nodes: Object.assign({}, graph.nodes), edges: graph.edges.slice(),
-    }
+    const next = graphWith(graph)
     for (const k of Object.keys(out)) {
       const old = next.nodes[k] || { x: null, y: null, cx: null, cy: null, chapter: '', mode: '', color: '', choices: [] }
       // 卡片就摆在 out 给的位置上：选项列是溢出的，不参与卡片自己的坐标
@@ -594,9 +980,7 @@ function BoardView(props) {
   }
 
   function clearCanvas() {
-    const next = {
-      version: 1, chapters: graph.chapters.slice(), nodes: Object.assign({}, graph.nodes), edges: graph.edges.slice(),
-    }
+    const next = graphWith(graph)
     for (const c of scope) {
       const k = cardKey(c)
       const old = next.nodes[k]
@@ -645,7 +1029,12 @@ function BoardView(props) {
       if (matchKey(e, 'mod+x') && cur) { e.preventDefault(); copyCard(cur, true); removeFromCanvas(cur); return }
       if (matchKey(e, 'mod+v')) { e.preventDefault(); pasteAt(null); return }
       if (matchKey(e, 'mod+d') && cur) { e.preventDefault(); props.onDuplicate(cur); return }
-      if (matchKey(e, 'space') && cur) { e.preventDefault(); if (expand && expand.key === sel) closeExpand(); else openExpand(cur); return }
+      if (matchKey(e, 'space') && cur) {
+        e.preventDefault()
+        if (isOpen(sel)) closeWin(sel)
+        else openExpand(cur)
+        return
+      }
       if (matchKey(e, 'delete') && cur) {
         e.preventDefault()
         // 框选了一组就整组移出画布（文件不动），否则只动当前这张
@@ -655,8 +1044,13 @@ function BoardView(props) {
       }
       if (matchKey(e, 'mod+0')) { e.preventDefault(); setView({ x: 24, y: 20, s: 1 }); return }
       if (matchKey(e, 'mod+1')) { e.preventDefault(); setView({ x: view.x, y: view.y, s: 1 }); return }
-      if (matchKey(e, 'esc')) { if (expand) closeExpand(); else { setMenu(null); setMulti([]) } return }
-      if (matchKey(e, 'mod+a')) { e.preventDefault(); setMulti(placed.map(cardKey)); return }
+      if (matchKey(e, 'esc')) {
+        // 先收窗口（没钉住的），再退一步收菜单 / 取消选择
+        if (wins.some(function (w) { return !w.pin })) closeLoose()
+        else { setMenu(null); setMulti([]) }
+        return
+      }
+      if (matchKey(e, 'mod+a')) { e.preventDefault(); setMulti(placed.map(cardKey).concat(refCards.map(cardKey))); return }
     }
     window.addEventListener('keydown', onKey)
     return function () { window.removeEventListener('keydown', onKey) }
@@ -666,20 +1060,27 @@ function BoardView(props) {
     removeManyFromCanvas([cardKey(card)])
   }
 
-  /** 一次把多张卡片移出画布（文件不动）。同 placeMany：只写一次图谱。 */
+  /** 一次把多张卡片移出画布（文件不动）。同 placeMany：只写一次图谱。
+   *  引用卡只从 refs 里删掉那一条 —— **绝不删卡片文件、绝不删文档**。 */
   function removeManyFromCanvas(keys) {
     if (!keys || !keys.length) return
     const set = {}
-    keys.forEach(function (k) { set[k] = true })
-    const next = {
-      version: 1, chapters: graph.chapters.filter(function (x) { return !set[x] }),
-      nodes: Object.assign({}, graph.nodes), edges: graph.edges.slice(),
-    }
+    const refKeys = []
+    keys.forEach(function (k) { set[k] = true; if (refRecs[k]) refKeys.push(k) })
+    const next = graphWith(graph, {
+      chapters: graph.chapters.filter(function (x) { return !set[x] }),
+    })
     for (const k of keys) {
+      if (refRecs[k]) continue
       if (level === 'root') next.nodes[k] = Object.assign({}, next.nodes[k] || {}, { x: null, y: null })
       else next.nodes[k] = Object.assign({}, next.nodes[k] || {}, { cx: null, cy: null })
     }
     next.edges = next.edges.filter(function (e) { return !set[e.from] && !set[e.to] })
+    if (refKeys.length) {
+      let refs = graph.refs
+      for (const k of refKeys) refs = patchRefs({ refs: refs }, ctx, k, null)
+      next.refs = refs
+    }
     props.onGraph(next)
     setMulti([])
   }
@@ -701,11 +1102,27 @@ function BoardView(props) {
     props.onNewCard(type, point, level === 'chapter' ? here.key : '', mode || '')
   }
 
+  /**
+   * 引用卡的右键菜单：只有 染色 + 从画布移开。
+   * 用户拍板：**不许**出现「删除卡片文件」或任何连线项 —— 引用不是这张画布上的卡，
+   * 改内容要回方片页去改。
+   */
+  function refMenuItems(card) {
+    const k = cardKey(card)
+    return [
+      { head: '引用卡（内容回方片页改）' },
+      { head: '染色' },
+      { key: 'color', colors: true },
+      { sep: true },
+      { key: 'out', label: '从画布移开', hint: 'Delete', onPick: function () { dropRefs([k]) } },
+    ]
+  }
+
   function menuItems(card) {
     const k = cardKey(card)
     const rec = nodeRec(graph, k)
     const items = []
-    items.push({ key: 'exp', label: (expand && expand.key === k) ? '收起' : '展开', hint: shortcutHint('展开'), onPick: function () { if (expand && expand.key === k) closeExpand(); else openExpand(card) } })
+    items.push({ key: 'exp', label: isOpen(k) ? '收起' : '展开', hint: shortcutHint('展开'), onPick: function () { if (isOpen(k)) closeWin(k); else openExpand(card) } })
     items.push({ sep: true })
     items.push({ key: 'cp', label: '复制', hint: shortcutHint('复制'), onPick: function () { copyCard(card, false) } })
     items.push({ key: 'ct', label: '剪切', hint: shortcutHint('剪切'), onPick: function () { copyCard(card, true); removeFromCanvas(card) } })
@@ -765,24 +1182,39 @@ function BoardView(props) {
   }
 
   // 框选出一组之后的批量菜单：只做「一次操作多张」的事，单张编辑留给卡片自己的菜单。
+  // 混着引用卡时：**原生卡照旧走「删除卡片文件」的三步确认，引用卡只移开**
+  //（用户拍板：引用卡从不删文件）。
   function batchMenuItems(keys) {
     const n = keys.length
-    return [
+    const refSel = keys.filter(function (k) { return !!refRecs[k] })
+    const nativeSel = keys.filter(function (k) { return !refRecs[k] })
+    const items = [
       { head: '已选 ' + n + ' 张（右键拖框选）' },
       { key: 'out', label: '移出画布', hint: 'Delete', onPick: function () { removeManyFromCanvas(keys) } },
       { sep: true },
       { head: '染色' },
       { key: 'color', colors: true },
       { sep: true },
-      { key: 'selectall', label: '选中这一层全部', onPick: function () { setMulti(placed.map(cardKey)) } },
-      { key: 'del', label: '删除这 ' + n + ' 张卡片文件…', danger: true, onPick: function () { props.onDeleteCards(keys) } },
-      { key: 'clr', label: '取消选择', onPick: function () { setMulti([]); setSel(null) } },
+      { key: 'selectall', label: '选中这一层全部', onPick: function () { setMulti(placed.map(cardKey).concat(refCards.map(cardKey))) } },
     ]
+    if (nativeSel.length) {
+      items.push({
+        key: 'del', label: '删除这 ' + nativeSel.length + ' 张卡片文件…', danger: true,
+        // 引用卡只移开（先写 refs），原生卡才走三步确认那条删文件的路
+        onPick: function () { if (refSel.length) dropRefs(refSel); props.onDeleteCards(nativeSel) },
+      })
+    } else {
+      items.push({ head: '选中 ' + refSel.length + ' 张引用卡：移开即可，不会删文件' })
+    }
+    items.push({ key: 'clr', label: '取消选择', onPick: function () { setMulti([]); setSel(null) } })
+    return items
   }
 
   const menuPoint = React.useRef({ x: 40, y: 40 })
 
   function onCanvasMenu(e) {
+    // 窗口/抽屉里的右键还给组件自己（文档里选中一段要复制，靠的就是原生菜单）
+    if (insideWindow(e.target) || insideDrawer(e.target)) return
     e.preventDefault()
     // 框选的收尾不是「打开菜单」：拖出过框（或刚拖完）就把这一下右键吃掉。
     if ((marqueeRef.current && marqueeRef.current.moved) || justMarqueed.current) {
@@ -817,13 +1249,16 @@ function BoardView(props) {
   useDismiss(function () { setEdgeMenu(null) }, !!edgeMenu)
 
   // ── 渲染 ───────────────────────────────────────────────────────────────────
+  const scrimOn = wins.some(function (w) { return w.mode === 'full' })
+  const stageAnim = wins.some(function (w) { return !w.open })
   const stageStyle = {
     // 取整：层原点落在整数像素上，文字才是像素对齐的（小数偏移会让整块画布发虚）。
     transform: 'translate(' + Math.round(view.x) + 'px,' + Math.round(view.y) + 'px) scale(' + view.s + ')',
   }
-  // 只有「展开时把卡片飞到中央」需要过渡。平移/缩放要是也套 .28s 过渡，既跟不上手，
+  // 只有「展开时把卡片飞到窗口里」需要过渡。平移/缩放要是也套 .28s 过渡，既跟不上手，
   // 又让浏览器一直拿旧位图做动画 —— 那是画布糊掉的另一半原因。
-  if (!expand || drag) stageStyle.transition = 'none'
+  // 浮动窗口开着的时候画布照样能拖能滚，所以过渡只在窗口**正在飞**的那 30ms 里打开。
+  if (!stageAnim || drag) stageStyle.transition = 'none'
 
   const edgeEls = []
   // 连线标签**不能**放进 <svg> 里 —— 浏览器不渲染 SVG 里的 HTML 元素，它会是 0×0、
@@ -912,12 +1347,14 @@ function BoardView(props) {
     if (!r.placed) return null
     const shown = liveRect(k)
     const rec = nodeRec(graph, k)
-    const isExpanding = expand && expand.key === k
+    const isExpanding = isOpen(k)
     return React.createElement(CardView, {
       key: k, card: c, rec: rec, rect: shown, cardKey: k,
       selected: sel === k || multi.indexOf(k) !== -1,
-      dimmed: !!expand && !isExpanding,
+      // 虚化只在全屏遮罩模式下发生：浮动窗口开着时画布还是可以读、可以操作的
+      dimmed: scrimOn && !isExpanding,
       expanded: !!isExpanding,
+      hasDoc: c.hasDoc === true,
       childNodes: c.type === 'chapter' ? nodesOfChapter(cards, graph, k) : [],
       onOpenNode: function (n) { props.onOpenCard(n) },
       linkLive: !!link,
@@ -936,6 +1373,22 @@ function BoardView(props) {
     })
   })
 
+  // 引用卡：借用分支卡那套形状（存档卡按「节点」那一档，内容是标题 + 简介）。
+  // 只画一张卡，没有连线圆点、没有选项列、不参与自动排列。
+  const refEls = refCards.map(function (c) {
+    const k = cardKey(c)
+    const shown = liveRect(k)
+    return React.createElement(RefCard, {
+      key: k, card: c, rect: shown, cardKey: k,
+      accent: refAccent(c, refRecs[k]),
+      selected: sel === k || multi.indexOf(k) !== -1,
+      dimmed: scrimOn && !isOpen(k),
+      onCardDown: onCardDown,
+      onDouble: function (card) { openExpand(card) },
+      onMenu: onCardMenu,
+    })
+  })
+
   const crumb = level === 'root'
     ? [React.createElement('span', { key: 'r', className: 'sc-crumb cur' }, '剧本档案')]
     : [
@@ -949,92 +1402,188 @@ function BoardView(props) {
     React.createElement('button', { className: 'sc-navbtn', disabled: hi >= hist.length - 1, title: '前进', onClick: fwd }, '›'),
     React.createElement('button', { className: 'sc-navbtn', title: '回到上级', onClick: home }, '⌂'),
     React.createElement('button', { className: 'sc-navbtn', title: '刷新画布', onClick: props.onRefresh }, '⟳'),
+    // 存档卡抽屉：按住里面的卡拖到画布上就是摆一张引用
+    React.createElement('button', {
+      className: 'sc-btn' + (drawer ? ' sc-btn-on' : ''), title: '存档卡抽屉：按住拖到画布上摆成引用',
+      onClick: function () { setDrawer(!drawer) },
+    }, '存档卡'),
     React.createElement('div', { className: 'sc-addr' }, crumb),
     React.createElement('span', { className: 'sc-boardtip' }, Math.round(view.s * 100) + '%')
   )
 
-  const scrim = expand ? React.createElement('div', { className: 'sc-scrim' + (expand.open ? ' on' : '') }) : null
+  // 全屏遮罩：只有「全屏」模式的窗口才铺这一层（老的展开行为：背景变暗、画布锁定）
+  const scrim = scrimOn
+    ? React.createElement('div', {
+      className: 'sc-scrim' + (wins.some(function (w) { return w.mode === 'full' && w.open }) ? ' on' : ''),
+    })
+    : null
 
-  const overlay = expand ? (function () {
-    const c = expand.card
-    const r = expand.to
-    const k = expand.key
+  /** 窗口里「卡片」页的那一大块内容（原先的 expand 内容，原样搬过来）。 */
+  function expandBodyEl(c, rec, k) {
+    return React.createElement('div', { className: 'sc-expandbody' },
+      React.createElement('div', { className: 'sc-meta' },
+        c.when && c.type !== 'chapter' ? React.createElement('span', null, '时间：' + c.when) : null,
+        React.createElement('span', null, '文件：' + c.file)
+      ),
+      React.createElement(TagRow, { tags: c.tags }),
+      c.type === 'chapter'
+        ? React.createElement('div', null,
+          React.createElement('div', { className: 'sc-h2' }, '下属节点'),
+          (function () {
+            const kids = nodesOfChapter(cards, graph, k)
+            if (!kids.length) return React.createElement('div', { className: 'sc-p' }, '这个章节里还没有节点。')
+            return React.createElement('div', { className: 'sc-nodelist' }, kids.map(function (n) {
+              return React.createElement('div', {
+                key: cardKey(n), className: 'sc-nodelistrow',
+                onClick: function () { props.onOpenCard(n) },
+              },
+                React.createElement('span', { className: 'n' }, typeLabel(n.type)),
+                React.createElement('span', { className: 't' }, n.title || n.file)
+              )
+            }))
+          })()
+        )
+        : (function () {
+          const sec = splitSections(c.body)
+          const blocks = []
+          for (const name of BODY_SECTIONS) {
+            const items = sec[name]
+            if (!items.length) continue
+            blocks.push(React.createElement('div', { key: name, className: 'sc-cardsec' },
+              React.createElement('div', { className: 'sc-cardsecname' }, name),
+              React.createElement('ul', { className: 'sc-cardlist' }, items.map(function (t, i) {
+                return React.createElement('li', { key: i }, inline(t, name + i))
+              }))
+            ))
+          }
+          if (!blocks.length) blocks.push(React.createElement('div', { key: 'raw' }, markdown(c.body || c.summary || '（正文为空）', 'exp')))
+          return React.createElement('div', null, blocks)
+        })(),
+      React.createElement('div', { className: 'sc-h2' }, '原文'),
+      React.createElement('div', null, markdown(c.body || '', 'raw')),
+      React.createElement('div', { className: 'sc-gap' }),
+      c.type === 'node' && (rec.mode === 'branch' || c.mode === 'branch') ? (function () {
+        // 分歧节点展开后，选项在下面单列一块，带一个加选项的快捷入口。
+        const choices = rec.choices || []
+        return React.createElement('div', null,
+          React.createElement('div', { className: 'sc-h2' }, '选项 (' + choices.length + ')'),
+          choices.length === 0
+            ? React.createElement('div', { className: 'sc-p' }, '还没有选项。')
+            : React.createElement('ul', { className: 'sc-cardlist' }, choices.map(function (ch) {
+              const target = cards.filter(function (x) { return cardKey(x) === ch.to })[0]
+              return React.createElement('li', { key: ch.id },
+                (ch.text || '（空选项）') + ' → ' + (target ? cardDisplay(target) : '（还没连到节点）'))
+            })),
+          React.createElement('div', { className: 'sc-gap' }),
+          React.createElement('button', {
+            className: 'sc-btn',
+            onClick: function () { props.onEditChoices(c) },
+          }, '＋ 添加 / 编辑选项')
+        )
+      })() : null,
+      React.createElement('div', { className: 'sc-gap' }),
+      React.createElement('button', { className: 'sc-btn', onClick: function () { props.onEditCard(c) } }, '在详情里编辑…')
+    )
+  }
+
+  /** 引用卡的只读详情：只有标题 / 类型 / 正文，**不挂 CardEditor / DocEditor**。 */
+  function refBodyEl(c) {
+    return React.createElement('div', { className: 'sc-expandbody' },
+      React.createElement('div', { className: 'sc-meta' },
+        React.createElement('span', { className: 'sc-reftag' }, '引用'),
+        c.when ? React.createElement('span', null, '时间：' + c.when) : null,
+        React.createElement('span', null, '文件：' + c.file)
+      ),
+      React.createElement(TagRow, { tags: c.tags }),
+      React.createElement('div', { className: 'sc-p' }, '这是引用，要改内容回方片页。'),
+      React.createElement('div', { className: 'sc-gap' }),
+      React.createElement('div', { className: 'sc-h2' }, '正文'),
+      React.createElement('div', null, markdown(c.body || c.summary || '（正文为空）', 'ref'))
+    )
+  }
+
+  // 每个窗口：标题栏（拖动 + 图钉 + 全屏/浮动 + 收起）、页签（卡片 | 文档）、内容区、缩放手柄。
+  const winEls = wins.map(function (w, i) {
+    const c = w.card
+    const k = w.key
     const rec = nodeRec(graph, k)
-    const accent = rec.color || c.color || ''
-    const style = { left: r.left, top: r.top, width: r.width, height: r.height }
+    // 引用卡：强调色用「手染色 → 角色色」，跟画布上那张引用卡一致
+    const accent = w.ro ? refAccent(c, refRecs[k]) : (rec.color || c.color || '')
+    const full = w.mode === 'full'
+    // 全屏模式下几何来自 fullRect（x/y/w/h 留给「切回浮动」用，原样不动）
+    const geo = full ? fullRect() : { x: w.x, y: w.y, w: w.w, h: w.h }
+    const style = { left: geo.x, top: geo.y, width: geo.w, height: geo.h, zIndex: 30 + i * 2 }
     if (accent) style['--sc-accent'] = accent
-    return React.createElement('div', { className: 'sc-expand' + (expand.open ? ' open' : ''), style: style },
-      React.createElement('div', { className: 'sc-expandh' },
+    // 拖 / 缩放中把过渡关掉：不然窗口追着手跑，像橡皮筋
+    if (winDrag && winDrag.key === k) style.transition = 'none'
+    const onDoc = !w.ro && w.tab === 'doc' && docCapable(c.type)
+    const kids = [
+      React.createElement('div', {
+        key: 'h', className: 'sc-expandh',
+        title: full ? '全屏遮罩模式（点标题栏上的「浮动」切回可拖动的窗口）' : '按住标题栏拖动窗口；右下角手柄缩放',
+        onPointerDown: function (e) { onWinDown(e, w) },
+        onClick: winClick,
+      },
         React.createElement('h3', null, cardDisplay(c) || c.file),
         React.createElement('span', { className: 'sc-tag' }, typeLabel(c.type)),
-        React.createElement('button', { className: 'sc-expandx', title: '收起', onClick: closeExpand }, '×')
+        React.createElement('span', { className: 'sc-spacer' }),
+        React.createElement('button', {
+          className: 'sc-expandb' + (w.pin ? ' on' : ''),
+          title: w.pin
+            ? '取消钉住（钉住的窗口：切卡片、切页都不自动收起）'
+            : '钉住：切卡片、切页也不自动收起，可以同时开好几个',
+          onClick: function (e) { e.stopPropagation(); togglePin(k) },
+        }, React.createElement(PinIcon, { on: w.pin })),
+        React.createElement('button', {
+          className: 'sc-expandb',
+          title: full ? '切回浮动窗口（可拖动、可缩放）' : '切到全屏遮罩模式（背景变暗、画布锁定，专注写东西）',
+          onClick: function (e) { e.stopPropagation(); toggleMode(k) },
+        }, full ? '浮动' : '全屏'),
+        React.createElement('button', { className: 'sc-expandx', title: '收起', onClick: function () { closeWin(k) } }, '×')
       ),
-      React.createElement('div', { className: 'sc-expandbody' },
-        React.createElement('div', { className: 'sc-meta' },
-          c.when && c.type !== 'chapter' ? React.createElement('span', null, '时间：' + c.when) : null,
-          React.createElement('span', null, '文件：' + c.file)
-        ),
-        React.createElement(TagRow, { tags: c.tags }),
-        c.type === 'chapter'
-          ? React.createElement('div', null,
-            React.createElement('div', { className: 'sc-h2' }, '下属节点'),
-            (function () {
-              const kids = nodesOfChapter(cards, graph, k)
-              if (!kids.length) return React.createElement('div', { className: 'sc-p' }, '这个章节里还没有节点。')
-              return React.createElement('div', { className: 'sc-nodelist' }, kids.map(function (n) {
-                return React.createElement('div', {
-                  key: cardKey(n), className: 'sc-nodelistrow',
-                  onClick: function () { props.onOpenCard(n) },
-                },
-                  React.createElement('span', { className: 'n' }, typeLabel(n.type)),
-                  React.createElement('span', { className: 't' }, n.title || n.file)
-                )
-              }))
-            })()
-          )
-          : (function () {
-            const sec = splitSections(c.body)
-            const blocks = []
-            for (const name of BODY_SECTIONS) {
-              const items = sec[name]
-              if (!items.length) continue
-              blocks.push(React.createElement('div', { key: name, className: 'sc-cardsec' },
-                React.createElement('div', { className: 'sc-cardsecname' }, name),
-                React.createElement('ul', { className: 'sc-cardlist' }, items.map(function (t, i) {
-                  return React.createElement('li', { key: i }, inline(t, name + i))
-                }))
-              ))
-            }
-            if (!blocks.length) blocks.push(React.createElement('div', { key: 'raw' }, markdown(c.body || c.summary || '（正文为空）', 'exp')))
-            return React.createElement('div', null, blocks)
-          })(),
-        React.createElement('div', { className: 'sc-h2' }, '原文'),
-        React.createElement('div', null, markdown(c.body || '', 'raw')),
-        React.createElement('div', { className: 'sc-gap' }),
-        c.type === 'node' && (rec.mode === 'branch' || c.mode === 'branch') ? (function () {
-          // 分歧节点展开后，选项在下面单列一块，带一个加选项的快捷入口。
-          const choices = rec.choices || []
-          return React.createElement('div', null,
-            React.createElement('div', { className: 'sc-h2' }, '选项 (' + choices.length + ')'),
-            choices.length === 0
-              ? React.createElement('div', { className: 'sc-p' }, '还没有选项。')
-              : React.createElement('ul', { className: 'sc-cardlist' }, choices.map(function (ch) {
-                const target = cards.filter(function (x) { return cardKey(x) === ch.to })[0]
-                return React.createElement('li', { key: ch.id },
-                  (ch.text || '（空选项）') + ' → ' + (target ? cardDisplay(target) : '（还没连到节点）'))
-              })),
-            React.createElement('div', { className: 'sc-gap' }),
-            React.createElement('button', {
-              className: 'sc-btn',
-              onClick: function () { props.onEditChoices(c) },
-            }, '＋ 添加 / 编辑选项')
-          )
-        })() : null,
-        React.createElement('div', { className: 'sc-gap' }),
-        React.createElement('button', { className: 'sc-btn', onClick: function () { props.onEditCard(c) } }, '在详情里编辑…')
-      )
-    )
-  })() : null
+      w.ro
+        ? React.createElement('div', { key: 'rt', className: 'sc-tag sc-reftag' }, '引用·只读')
+        : null,
+      docCapable(c.type) && !w.ro
+        ? TabRow({
+          key: 'tabs',
+          value: onDoc ? 'doc' : 'card',
+          onChange: function (t) { setWinTab(k, t) },
+          items: [{ key: 'card', label: '卡片' }, { key: 'doc', label: '文档' }],
+        })
+        : null,
+      onDoc
+        ? React.createElement('div', { key: 'b', className: 'sc-expandbody sc-docbody' },
+          React.createElement(DocEditor, {
+            api: props.api, root: props.root, card: c,
+            // 文档里录台词要能选人物（清单由 95-panel 从人物卡算好传下来）
+            speakers: props.speakers,
+            onNotice: props.onNotice,
+            onDocChange: function (has) { if (props.onDocChange) props.onDocChange(c, has) },
+          }))
+        : (w.ro ? refBodyEl(c) : expandBodyEl(c, rec, k)),
+      full ? null : React.createElement('div', {
+        key: 'g', className: 'sc-expandgrip', title: '拖动缩放（最小 320×220，不会拖出画布）',
+        onPointerDown: function (e) { onWinGripDown(e, w) },
+      })
+    ]
+    return React.createElement('div', {
+      key: k,
+      className: 'sc-expand sc-' + (full ? 'full' : 'float') + (w.open ? ' open' : ''),
+      // 只有 data-win：**故意不带 data-key** —— keyUnder() 是「指针底下是哪张卡片」的
+      // 命中测试（拉线落点也用它），窗口要是带着卡片的 key，往窗口上一松手就会被当成
+      // 「落在这张卡上」。
+      style: style, 'data-win': k,
+      // 浮窗自己吃滚轮（见 onWheel）：里面那一页内容滚它，画布别跟着缩放
+      'data-wheel': 'own',
+      // 窗口里点一下就把这一块抬到最上面；事件不许漏给画布（漏了就是取消选中 + 平移）
+      onPointerDown: function (e) {
+        if (e && typeof e.stopPropagation === 'function') e.stopPropagation()
+        bringWinFront(k)
+      },
+      onClick: winClick,
+    }, ...kids)
+  })
 
   const dockTitle = level === 'root' ? '章节堆叠' : '本章节待放置'
 
@@ -1044,7 +1593,7 @@ function BoardView(props) {
       className: 'sc-canvas' + (panOn ? ' panning' : ''), ref: canvasRef,
       onPointerDown: onCanvasDown, onContextMenu: onCanvasMenu,
     },
-      React.createElement('div', { className: 'sc-stage' + (expand && expand.open ? ' blur' : ''), style: stageStyle },
+      React.createElement('div', { className: 'sc-stage' + (scrimOn ? ' blur' : ''), style: stageStyle },
         React.createElement('div', { className: 'sc-dots' }),
         React.createElement('svg', { className: 'sc-edges', width: 8000, height: 8000 },
           React.createElement('defs', null,
@@ -1072,6 +1621,7 @@ function BoardView(props) {
         // 跟着整块画布一起平移缩放。
         edgeLabels,
         cardEls,
+        refEls,
         // 框选的框：画布坐标，跟着画布一起缩放；只画个虚线框，不挡任何点击
         marquee ? React.createElement('div', {
           className: 'sc-marquee',
@@ -1079,11 +1629,43 @@ function BoardView(props) {
         }) : null
       ),
       scrim,
-      overlay,
-      ghost ? React.createElement('div', {
-        className: 'sc-ghost',
-        style: { left: ghost.x - 70, top: ghost.y - 30, width: 140, height: 60, position: 'fixed' },
-      }, React.createElement('div', { className: 'sc-dockcardtitle' }, cardDisplay(ghost.card))) : null
+      ...winEls,
+      drawer ? React.createElement('div', { className: 'sc-drawer', 'data-wheel': 'own', style: { width: DRAWER_W } },
+        // 抽屉整体就是滚动容器（overflow-y:auto）：悬停在**任何位置**（含头部、筛选框
+        // 那一行）滚轮都滚它。所以头部与筛选框自己 position:sticky 挂在顶上。
+        React.createElement('div', { className: 'sc-drawersticky' },
+          React.createElement('div', { className: 'sc-drawerhead' },
+            React.createElement('span', null, '存档卡'),
+            React.createElement('span', { className: 'sc-spacer' }),
+            React.createElement('button', { className: 'sc-btn', title: '关掉抽屉', onClick: function () { setDrawer(false) } }, '×')
+          ),
+          React.createElement('input', {
+            className: 'sc-inp full sc-menuinput', value: drawerQ, placeholder: '筛选卡片…',
+            onPointerDown: function (e) { e.stopPropagation() },
+            onChange: function (e) { setDrawerQ(e.target.value) },
+          })
+        ),
+        (function () {
+          const groups = drawerGroups()
+          if (!groups.length) return React.createElement('div', { className: 'sc-empty', style: { padding: '8px 2px' } }, '没有匹配的卡片。')
+          return groups.map(function (g) {
+            return React.createElement('div', { key: g.key },
+              React.createElement('div', { className: 'sc-drawerhead2' }, g.label + '（' + g.items.length + '）'),
+              g.items.map(function (c) { return drawerItem(c, cardKey(c)) })
+            )
+          })
+        })(),
+        React.createElement('div', { className: 'sc-drawerhint' }, '按住拖到画布上＝摆一张引用（不改卡片文件、不连线）')
+      ) : null,
+      ghost ? (function () {
+        const gs = refSizeOf(ghost.card.type)
+        const w = ghost.fromDrawer ? gs.w : 140
+        const h = ghost.fromDrawer ? gs.h : 60
+        return React.createElement('div', {
+          className: 'sc-ghost' + (ghost.fromDrawer ? ' reffrom' : ''),
+          style: { left: ghost.x - w / 2, top: ghost.y - h / 2, width: w, height: h, position: 'fixed' },
+        }, React.createElement('div', { className: 'sc-dockcardtitle' }, cardDisplay(ghost.card)))
+      })() : null
     ),
     Dock({
       items: unplaced, title: dockTitle,
@@ -1127,17 +1709,28 @@ function BoardView(props) {
         x: menu.x, y: menu.y, items: batchMenuItems(menu.batch),
         color: '',
         swatches: props.swatches, onEditSwatches: props.onEditSwatches,
+        // 色卡：选一个就应用并关菜单（老behavior）；色盘：实时换色、菜单留着
         onColor: function (v) { patchMany(menu.batch, { color: v }); setMenu(null) },
+        onColorPick: function (v) { patchMany(menu.batch, { color: v }) },
         onClose: function () { setMenu(null) },
       })
       : (menu.card
-        ? MenuList({
-          x: menu.x, y: menu.y, items: menuItems(menu.card),
-          color: nodeRec(graph, cardKey(menu.card)).color || menu.card.color || '',
-          swatches: props.swatches, onEditSwatches: props.onEditSwatches,
-          onColor: function (v) { patchRec(cardKey(menu.card), { color: v }); setMenu(null) },
-          onClose: function () { setMenu(null) },
-        })
+        ? (function () {
+          // 引用卡有**自己那一套**菜单：只有 染色 + 从画布移开（不许出现删除卡片 / 连线项）
+          const isRef = !!refRecs[cardKey(menu.card)]
+          const k = cardKey(menu.card)
+          return MenuList({
+            x: menu.x, y: menu.y,
+            items: isRef ? refMenuItems(menu.card) : menuItems(menu.card),
+            color: isRef
+              ? String((refRecs[k] || {}).color || '')
+              : (nodeRec(graph, k).color || menu.card.color || ''),
+            swatches: props.swatches, onEditSwatches: props.onEditSwatches,
+            onColor: function (v) { patchRec(k, { color: v }); setMenu(null) },
+            onColorPick: function (v) { patchRec(k, { color: v }) },
+            onClose: function () { setMenu(null) },
+          })
+        })()
         : MenuList({
           x: menu.x, y: menu.y, items: emptyMenuItems(),
           color: '',

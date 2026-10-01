@@ -151,12 +151,24 @@ function makeApi(ctx, wf) {
   function archiveRoot(root) { return joinPath(root, state.dirs.archive) }
   function cardsPath(root) { return joinPath(archiveRoot(root), state.dirs.cards) }
   function archPath(root) { return joinPath(archiveRoot(root), state.dirs.sub) }
+  function docsPath(root) { return joinPath(archiveRoot(root), state.dirs.docs) }
   function graphFile(root) { return joinPath(archiveRoot(root), GRAPH_FILE) }
 
   function fail(res) {
     const code = res && res.error ? res.error.code : undefined
     const message = res && res.error && res.error.message ? res.error.message : ''
     return new Error(errText(message || code || '空响应'))
+  }
+
+  /** 「这个文件不在」不是错误：文档文件本来就可以不存在（＝还没写过）。 */
+  function isMissing(res) {
+    const code = res && res.error ? String(res.error.code || '') : ''
+    const message = res && res.error && res.error.message ? String(res.error.message) : ''
+    return code === 'error.notFound' || /notFound|no such file|ENOENT/i.test(message)
+  }
+
+  function isMissingErr(e) {
+    return /notFound|no such file|ENOENT|这个目录不在了/.test(String(e && e.message ? e.message : e))
   }
 
   function pickNames(entries) {
@@ -212,6 +224,102 @@ function makeApi(ctx, wf) {
     return true
   }
 
+  async function removePath(root, path) {
+    const b = bridge()
+    if (!b) throw new Error('只读模式：不能删除文件。')
+    if (typeof b.fsRemove !== 'function') throw new Error('宿主半边的落盘桥没有提供 fsRemove。')
+    const res = await b.fsRemove(archiveRoot(root), path)
+    if (!res || res.ok !== true) throw fail(res)
+    return true
+  }
+
+  /** 一张卡片有没有文档：文件名相同、而且不是空文件。 */
+  async function docIndex(root) {
+    const names = await listNames(root, docsPath(root))
+    if (names === null || !names.length) return {}
+    const b = bridge()
+    const out = {}
+    for (const n of names) {
+      out[n] = true
+      // 空文件不算「有文档」：能问到大小就问一声（宿主桥提供 fsStat）。
+      // 只读模式（没有桥）问不到，就按「存在即算」——反正那个模式下也写不进去。
+      if (b && typeof b.fsStat === 'function') {
+        try {
+          const res = await b.fsStat(archiveRoot(root), joinPath(docsPath(root), n))
+          const v = res && res.ok === true ? res.value : null
+          if (v && v.exists === true && Number(v.size) === 0) out[n] = false
+        } catch (e) { /* 量不到就按有算 */ }
+      }
+    }
+    return out
+  }
+
+  /**
+   * 读一张卡片的文档。文件不在＝「还没有文档」，**不是错误**（用户的要求）。
+   * 读不到别的（权限、桥挂了）照样抛，别把真错误咽掉。
+   */
+  async function readDoc(root, file) {
+    const p = joinPath(docsPath(root), file)
+    const b = bridge()
+    if (b) {
+      // 先用 fsStat 问在不在：宿主桥对不存在的文件是抛错（readFileSync ENOENT），
+      // 靠错误码猜太脆；fsStat 是专门为「在不在」设计的（宿主半边对不存在的路径
+      // 返回 exists:false 而不是报错）。
+      if (typeof b.fsStat === 'function') {
+        const st = await b.fsStat(archiveRoot(root), p)
+        const v = st && st.ok === true ? st.value : null
+        if (!v || v.exists !== true) return { exists: false, text: '' }
+      }
+      const res = await b.fsRead(archiveRoot(root), p)
+      if (!res || res.ok !== true) {
+        if (isMissing(res)) return { exists: false, text: '' }
+        throw fail(res)
+      }
+      return { exists: true, text: String((res.value && res.value.text) || '') }
+    }
+    try {
+      return { exists: true, text: await readText(root, p) }
+    } catch (e) {
+      if (isMissingErr(e)) return { exists: false, text: '' }
+      throw e
+    }
+  }
+
+  /**
+   * 写一张卡片的文档。语义（用户拍板）：**空文档不落盘** ——
+   * 内容 trim 后为空且文件已存在 → 删掉它；文件不存在 → 什么都不做（不创建）。
+   * 非空才写，写之前先确保子目录在。
+   * 返回 { ok, mode: 'saved' | 'removed' | 'empty' }。
+   */
+  async function writeDoc(root, file, text) {
+    const body = String(text == null ? '' : text)
+    const p = joinPath(docsPath(root), file)
+    if (!body.trim()) {
+      const cur = await readDoc(root, file)
+      if (!cur.exists) return { ok: true, mode: 'empty' }
+      await removePath(root, p)
+      return { ok: true, mode: 'removed' }
+    }
+    await ensureDir(root, state.dirs.docs)
+    await writeText(root, p, body)
+    return { ok: true, mode: 'saved' }
+  }
+
+  /** 删掉一张卡片的文档（「一起删除文档」）。文件本来就不在也不报错。 */
+  async function deleteDoc(root, file) {
+    const cur = await readDoc(root, file)
+    if (!cur.exists) return false
+    await removePath(root, joinPath(docsPath(root), file))
+    return true
+  }
+
+  async function ensureDir(root, name) {
+    const b = bridge()
+    if (!b || typeof b.fsMkdir !== 'function') return false
+    const res = await b.fsMkdir(archiveRoot(root), joinPath(archiveRoot(root), name))
+    return !!(res && res.ok === true)
+  }
+
   return {
     bridge: bridge,
     canWrite: function () { return !!bridge() },
@@ -245,6 +353,12 @@ function makeApi(ctx, wf) {
       }
       const cards = (await load(cardsDir, 'card', cardNames)).filter(Boolean)
       const archives = (await load(archDir, 'archive', archNames)).filter(Boolean)
+      // 「这张卡片有没有文档」随扫描一起收上来：画布与方片页右上角那个小角标靠它，
+      // 不用每张卡片各查一次。空文件不算有文档（文档为空时本来就不落盘，见 writeDoc）。
+      const docs = await docIndex(root)
+      const mark = function (c) { c.hasDoc = docs[c.file] === true; return c }
+      cards.forEach(mark)
+      archives.forEach(mark)
       archives.reverse()
       if (signal && signal.aborted) return { cards: [], archives: [] }
       return { cards: cards, archives: archives, missing: false }
@@ -289,14 +403,19 @@ function makeApi(ctx, wf) {
     },
 
     async deleteCard(root, kind, file) {
-      const b = bridge()
-      if (!b) throw new Error('只读模式：不能删除卡片文件。')
-      if (typeof b.fsRemove !== 'function') throw new Error('宿主半边的落盘桥没有提供 fsRemove。')
       const dir = kind === 'archive' ? archPath(root) : cardsPath(root)
-      const res = await b.fsRemove(archiveRoot(root), joinPath(dir, file))
-      if (!res || res.ok !== true) throw fail(res)
-      return true
+      return removePath(root, joinPath(dir, file))
     },
+
+    // ── 每张卡片一份的独立文档（<档案目录>/<文档子目录>/<卡片文件名>） ──────────
+    // 文档**不是**卡片正文：正文照旧在 卡片/ 里，卡片文件一个字都不动。
+    docsPath: docsPath,
+    /** 相对路径（给状态行显示用）：<档案目录>/<文档子目录>/<卡片文件名> */
+    docPathOf: function (file) { return joinPath(state.dirs.archive, state.dirs.docs, file) },
+    docIndex: docIndex,
+    readDoc: readDoc,
+    writeDoc: writeDoc,
+    deleteDoc: deleteDoc,
 
     graphPath: graphFile,
 
@@ -314,17 +433,14 @@ function makeApi(ctx, wf) {
         chapters: graph.chapters,
         nodes: graph.nodes,
         edges: graph.edges,
+        // 引用卡位置（顶层 refs）：空就写空表，别写出半截结构
+        refs: graph.refs || {},
       }, null, 2)
       await writeText(root, graphFile(root), text)
       return true
     },
 
-    async ensureDir(root, name) {
-      const b = bridge()
-      if (!b || typeof b.fsMkdir !== 'function') return false
-      const res = await b.fsMkdir(archiveRoot(root), joinPath(archiveRoot(root), name))
-      return !!(res && res.ok === true)
-    },
+    ensureDir: ensureDir,
   }
 }
 

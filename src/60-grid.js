@@ -101,9 +101,22 @@ function Tile(props) {
   const starred = props.starred
   const pinned = props.pinned
   const on = props.on
+  // 角色色（只有人物卡有）：来自 frontmatter 的 color，其次是 tags 里的「印象色#」。
+  // 显示方式选的是**标题用角色色**这一种（不是另加装饰）：跟文档里「台词名字有颜色」
+  // 是同一套说法、同一个来源，也不占地方；用户明确讨厌多出来的入口与装饰。
+  const accent = props.accent || ''
+  const style = accent ? { '--sc-accent': accent } : undefined
   return React.createElement('div', {
-    className: 'sc-tile' + (on ? ' on' : ''),
+    className: 'sc-tile' + (on ? ' on' : '') + (accent ? ' dye' : ''),
+    style: style,
     onClick: function () { props.onOpen(c) },
+    // 右键：人物卡弹「角色色」菜单，其它卡不弹（入口克制，用户明确讨厌多余的入口）。
+    // 一律 preventDefault：面板里不混两种右键菜单（画布那边也是全吃掉）。
+    onContextMenu: function (e) {
+      if (e && typeof e.preventDefault === 'function') e.preventDefault()
+      if (e && typeof e.stopPropagation === 'function') e.stopPropagation()
+      if (props.onMenu) props.onMenu(e, c)
+    },
   },
     React.createElement('div', { className: 'sc-tiletop' },
       React.createElement('div', { className: 'sc-tiletitle' }, c.title || c.file),
@@ -119,7 +132,12 @@ function Tile(props) {
       )
     ),
     React.createElement(TagRow, { tags: c.tags }),
-    React.createElement('div', { className: 'sc-tilesum' }, c.summary || c.preview || '')
+    React.createElement('div', { className: 'sc-tilesum' }, c.summary || c.preview || ''),
+    // 有文档的小角标（和画布上的卡片同一个标记）。文档页签只给章节 / 节点，
+    // 所以方片页这几张卡平时不会亮；亮着就说明文档目录里确实有一份同名文件。
+    c.hasDoc ? React.createElement('div', {
+      className: 'sc-docdot', title: '这张卡片有文档（在卡片文件同名的文档文件里）',
+    }) : null
   )
 }
 
@@ -145,6 +163,36 @@ function GridView(props) {
   const star = props.ui.star
   const pin = props.ui.pin
   const q = String(props.query || '').trim().toLowerCase()
+  // 人物卡的「角色色」菜单（右键 tile 弹出来）。只给 type=character 的卡，
+  // 菜单本身就是画布那套色卡（swatches / 自定义色卡 / 清除）。
+  const [menu, setMenu] = React.useState(null)
+  useDismiss(function () { setMenu(null) }, !!menu)
+
+  function openCardMenu(e, c) {
+    if (!c || c.type !== 'character') return
+    setMenu({ x: Number(e && e.clientX) || 0, y: Number(e && e.clientY) || 0, card: c })
+  }
+
+  /** 菜单挂在这个视图自己的根上（不能塞进 .sc-items：那是滚动容器）。 */
+  function menuNodes() {
+    if (!menu) return []
+    return [
+      MenuBackdrop({ onClose: function () { setMenu(null) } }),
+      MenuList({
+        x: menu.x, y: menu.y, color: menu.card.color || '',
+        swatches: props.swatches, onEditSwatches: props.onEditSwatches,
+        items: [
+          { head: '角色色（写进卡片文件的 color，跟项目进 git）' },
+          { key: 'color', colors: true },
+        ],
+        // 色卡块里的「清除」＝空串 → 回到自动读 tags 的「印象色#rrggbb」
+        onColor: function (v) { props.onSetColor(menu.card, v); setMenu(null) },
+        // 色盘：实时换色、**菜单留着**（Chromium 一点开就派发 change 的那个坑）
+        onColorPick: function (v) { props.onSetColor(menu.card, v) },
+        onClose: function () { setMenu(null) },
+      }),
+    ]
+  }
 
   let visible = props.starOnly ? all.filter(function (c) { return star.indexOf(cardKey(c)) !== -1 }) : all
   if (q) {
@@ -195,7 +243,10 @@ function GridView(props) {
                 return React.createElement(Tile, {
                   key: k, card: c, on: selected === k,
                   starred: star.indexOf(k) !== -1, pinned: pin.indexOf(k) !== -1,
+                  // 只有人物卡上色；颜色来源与文档里名字着色同一个函数
+                  accent: c.type === 'character' ? speakerColor(c) : '',
                   onOpen: props.onOpen, onStar: props.onStar, onPin: props.onPin,
+                  onMenu: openCardMenu,
                 })
               })
             )
@@ -205,7 +256,7 @@ function GridView(props) {
   )
 
   const narrow = props.narrow
-  if (narrow && !selected) return React.createElement('div', { className: 'sc-body' }, list)
+  if (narrow && !selected) return React.createElement('div', { className: 'sc-body' }, list, ...menuNodes())
 
   const detail = React.createElement('div', { className: 'sc-detail' },
     selected && props.detailOpen
@@ -221,9 +272,10 @@ function GridView(props) {
           React.createElement('h2', null, props.detailCard ? props.detailCard.title : '')
         ),
         detail
-      )
+      ),
+      ...menuNodes()
     )
   }
 
-  return React.createElement('div', { className: 'sc-body' }, list, detail)
+  return React.createElement('div', { className: 'sc-body' }, list, detail, ...menuNodes())
 }

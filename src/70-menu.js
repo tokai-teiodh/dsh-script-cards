@@ -18,6 +18,20 @@ function MenuList(props) {
     if (!it) return null
     if (it.sep) return React.createElement('div', { key: 'sep' + i, className: 'sc-menusep' })
     if (it.head) return React.createElement('div', { key: 'h' + i, className: 'sc-menuhead' }, it.head)
+    // 菜单里的输入框（文档里那套「人物」菜单：人一多就得能筛）。
+    // 鼠标与键盘事件都要 stopPropagation：打字不许冒泡到画布（Delete / 空格 / Ctrl+V
+    // 是画布快捷键），mousedown 也不许冒到 MenuBackdrop 上被当成「点了别处」。
+    if (it.input) {
+      return React.createElement('input', {
+        key: 'inp' + i,
+        className: it.input.className || 'sc-inp full sc-menuinput',
+        value: it.input.value, autoFocus: true,
+        placeholder: it.input.placeholder || '',
+        onMouseDown: function (e) { e.stopPropagation() },
+        onKeyDown: function (e) { e.stopPropagation(); if (it.input.onKeyDown) it.input.onKeyDown(e) },
+        onChange: function (e) { it.input.onChange(e.target.value) },
+      })
+    }
     if (it.colors) {
       const list = props.swatches && props.swatches.length ? props.swatches : DEFAULT_SWATCHES
       return React.createElement('div', { key: 'c' + i },
@@ -33,7 +47,23 @@ function MenuList(props) {
           React.createElement('input', {
             className: 'sc-colorinput', type: 'color',
             value: props.color || list[0] || '#7A8BA6',
-            onChange: function (e) { props.onColor(e.target.value) },
+            // 色盘是**实时**换色、但**不关菜单**：Chromium 一点开取色器就会派发一次
+            // change（值往往就是原值），以前这里直接走 onColor → 调用点顺手 setMenu(null)，
+            // 于是「一点色盘整块菜单就没了」（用户报的）。所以：
+            //   ① 先和当前色比一下，一样就什么都不做；
+            //   ② 换色走 onColorPick（不关菜单），关菜单交给点别处 / Esc；
+            //   ③ 自己的鼠标事件全 stopPropagation，别冒出去碰到遮罩。
+            onChange: function (e) {
+              const v = String(e.target.value || '')
+              if (!v) return
+              if (props.color && v.toLowerCase() === String(props.color).toLowerCase()) return
+              if (props.onColorPick) props.onColorPick(v)
+              else props.onColor(v)
+            },
+            onMouseDown: function (e) { e.stopPropagation() },
+            onClick: function (e) { e.stopPropagation() },
+            onInput: function (e) { e.stopPropagation() },
+            onContextMenu: function (e) { e.preventDefault(); e.stopPropagation() },
           }),
           React.createElement('span', null, '色盘'),
           React.createElement('span', { style: { flex: 1 } }),
@@ -67,10 +97,30 @@ function MenuList(props) {
 // 真实浏览器里的表现就是「右键菜单点任何一项都没反应」，而无头测试只直接触发
 // onClick，所以一直没暴露这个顺序问题。
 function MenuBackdrop(props) {
+  // 兜底：事件 target 落在菜单**里面**就绝不关（原生取色器/别的原生控件有时会把事件
+  // 路径变得和想象中不一样，一旦没被 stopPropagation 拦住，这层遮罩就会把菜单收掉）。
+  // 写法带兜底 —— mini-react 的假元素没有 closest，不能写死它存在。
+  function insideMenu(e) {
+    const t = e && e.target
+    if (!t) return false
+    if (typeof t.closest === 'function') {
+      try { return !!t.closest('.sc-menu') } catch (err) { return false }
+    }
+    return false
+  }
   return React.createElement('div', {
     className: 'sc-menuback',
-    onMouseDown: function (e) { e.stopPropagation(); if (props.onClose) props.onClose() },
-    onContextMenu: function (e) { e.preventDefault(); e.stopPropagation(); if (props.onClose) props.onClose() },
+    onMouseDown: function (e) {
+      e.stopPropagation()
+      if (insideMenu(e)) return
+      if (props.onClose) props.onClose()
+    },
+    onContextMenu: function (e) {
+      e.preventDefault()
+      e.stopPropagation()
+      if (insideMenu(e)) return
+      if (props.onClose) props.onClose()
+    },
   })
 }
 

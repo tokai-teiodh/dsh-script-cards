@@ -29,6 +29,10 @@ const PORT_DX = 8
 const EDGE_PAD = 4000
 const EXPAND_W = PANEL_W
 const EXPAND_H = 430
+// 浮动窗口的最小尺寸（用户定的大约 320×220）。下限在 UI 层（85-boardview 的 clampWin）
+// 强制：画布比这还窄时以画布为准，否则「最小 320」会把窗口顶出画布。
+const WIN_MIN_W = 320
+const WIN_MIN_H = 220
 
 function sizeOf(type) {
   return { w: CARD_W[type] || 184, h: CARD_H[type] || 80 }
@@ -344,6 +348,14 @@ function CardView(props) {
     onPointerUp: function (e) { props.onDropLink(e, c) },
   }))
 
+  // 「这张卡有文档」的小角标（右上角）。它挂在卡片角上、往外挪 4px：卡片里的右上角
+  // 是节点卡的时间文字，占位会把它挤走；卡片的 overflow 是 visible，角标露在外面正好。
+  if (props.hasDoc) {
+    children.push(React.createElement('div', {
+      key: 'doc', className: 'sc-docdot', title: '这张卡片有文档（展开后在「文档」页里读）',
+    }))
+  }
+
   return React.createElement('div', {
     className: cls, style: style,
     'data-key': props.cardKey, 'data-type': type,
@@ -351,6 +363,51 @@ function CardView(props) {
     onDoubleClick: function (e) { e.stopPropagation(); props.onDouble(c) },
     onContextMenu: function (e) { e.preventDefault(); e.stopPropagation(); props.onMenu(e, c) },
   }, children)
+}
+
+// ── 引用卡（「存档卡抽屉」拖进来的那些） ──────────────────────────────────────
+// 引用＝把一张**别处**的卡片摆到这块画布上：不新建文件、不改卡片文件，位置只写
+// 分支.json 的 refs[ctx][cardKey]。画布上「能摆、能看、能染」，不能改内容、不连线、
+// 不参与自动排列（用户拍板）。
+//
+// 尺寸：分支卡借用它们自己那一档；**存档卡统一按「节点卡」那一档**（内容形态就是
+// 标题 + 简介）。
+function refSizeOf(type) {
+  return isBranchType(type) ? sizeOf(type) : sizeOf('node')
+}
+
+/**
+ * 引用卡的强调色：手染色（图谱 refs[ctx][key].color）优先，没染就用**角色色**
+ * （frontmatter 的 color → tags 里的 印象色#rrggbb）。跟文档里「台词名字有颜色」
+ * 是同一条思路：画布上一眼认得出这是谁。
+ */
+function refAccent(card, rec) {
+  const manual = rec && rec.color ? String(rec.color) : ''
+  if (manual) return manual
+  return speakerColor(card)
+}
+
+/** 引用卡：标题 + 简介、右上角一个「引用」角标、没有连线圆点、没有选项列。 */
+function RefCard(props) {
+  const c = props.card
+  const r = props.rect
+  const style = { left: r.x, top: r.y, width: r.w, height: r.h }
+  if (props.accent) style['--sc-accent'] = props.accent
+  const cls = ['sc-card', 'sc-refcard', props.selected ? 'on' : '', props.accent ? 'dye' : '', props.dimmed ? 'dim' : ''].filter(Boolean).join(' ')
+  return React.createElement('div', {
+    className: cls, style: style,
+    'data-key': props.cardKey, 'data-type': c.type, 'data-ref': '1',
+    onPointerDown: function (e) { props.onCardDown(e, c) },
+    onDoubleClick: function (e) { e.stopPropagation(); props.onDouble(c) },
+    onContextMenu: function (e) { e.preventDefault(); e.stopPropagation(); props.onMenu(e, c) },
+  },
+    React.createElement('div', { key: 'k', className: 'sc-refkind' }, typeLabel(c.type)),
+    React.createElement('div', { key: 't', className: 'sc-cardname' }, cardDisplay(c) || c.file),
+    React.createElement('div', { key: 's', className: 'sc-cardsum' }, c.summary || plainText(c.body) || '（还没有简介）'),
+    // 「引用」角标：虚线小圈，挂在**左下角** —— 右上角是「有文档」的 .sc-docdot 的地盘，
+    // 两个角标不许撞在一起。
+    React.createElement('div', { key: 'b', className: 'sc-refbadge', title: '这是引用：卡片文件在别处，内容要回方片页改' }, '引用')
+  )
 }
 
 function Dock(props) {

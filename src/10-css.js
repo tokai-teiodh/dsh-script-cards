@@ -30,11 +30,17 @@ const CSS = `
 .sc-group::after{content:'';flex:1;height:1px;background:var(--dsw-alias-border-l1)}
 .sc-group.pin{color:var(--dsw-alias-brand-primary)}
 .sc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(146px,1fr));gap:8px}
-.sc-tile{display:flex;flex-direction:column;gap:5px;min-height:98px;padding:9px 10px 10px;border-radius:12px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);cursor:pointer}
+.sc-tile{position:relative;display:flex;flex-direction:column;gap:5px;min-height:98px;padding:9px 10px 10px;border-radius:12px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);cursor:pointer}
 .sc-tile:hover{border-color:var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2)}
 .sc-tile.on{border-color:var(--dsw-alias-brand-primary);background:var(--dsw-alias-bg-layer-2)}
 .sc-tiletop{display:flex;align-items:flex-start;gap:4px}
 .sc-tiletitle{flex:1;min-width:0;font-size:13px;font-weight:600;line-height:1.4;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+/* 人物卡的「角色色」：**只把标题染成角色色** —— 不加新元素、不动右上角那两个小图标、
+   详情区也不加按钮（用户对多余的入口/装饰很敏感，这条是反复确认过的）。
+   跟文档里「台词名字有颜色」是同一套说法、同一个数据来源，一眼能对上是谁。
+   颜色来自人物卡 frontmatter 的 color，没有就读 tags 里的 印象色#rrggbb；
+   两样都没有就不加 .dye，标题照旧用正文色。 */
+.sc-tile.dye .sc-tiletitle{color:var(--sc-accent,var(--dsw-alias-label-primary))}
 .sc-tileacts{flex:none;display:flex;gap:1px;opacity:0}
 .sc-tile:hover .sc-tileacts{opacity:1}
 .sc-tileacts.force{opacity:1}
@@ -207,14 +213,106 @@ const CSS = `
 .sc-nodelistrow .n{flex:none;color:var(--dsw-alias-label-secondary);font-family:ui-monospace,Menlo,Consolas,monospace}
 .sc-nodelistrow .t{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 
-/* 展开态：卡片移到中央后放大，背景（含其他卡片）虚化 */
+/* 展开态：从「全屏遮罩里的大卡片」改成**浮动窗口**（用户拍板）。
+   默认 .sc-float：拖标题栏移动、右下角手柄缩放，画布照样能拖能滚，可以同时开好几个
+   （钉住的不会被自动收起）。.sc-full 是老的全屏遮罩模式：背景变暗、画布锁定，
+   由 .sc-scrim 那一层盖住，位置固定不做拖动 —— 大段写文档时更专注。 */
 .sc-expand{position:absolute;box-sizing:border-box;border-radius:14px;border:1px solid var(--sc-accent,var(--dsw-alias-brand-primary));background:var(--dsw-alias-bg-base);box-shadow:0 18px 50px rgba(0,0,0,.4);padding:16px 18px;display:flex;flex-direction:column;z-index:30;transition:left .26s cubic-bezier(.22,.61,.36,1),top .26s cubic-bezier(.22,.61,.36,1),width .26s cubic-bezier(.22,.61,.36,1),height .26s cubic-bezier(.22,.61,.36,1)}
 .sc-expand.open{box-shadow:0 26px 70px rgba(0,0,0,.5)}
-.sc-expandh{display:flex;align-items:baseline;gap:8px;flex:none;padding-bottom:8px;border-bottom:1px solid var(--dsw-alias-border-l1);margin-bottom:8px}
-.sc-expand h3{margin:0;font-size:16px;font-weight:700;flex:1;min-width:0}
+/* 浮动态：更像一块「贴在上面」的窗口，四角方一点、投影实一点 */
+.sc-expand.sc-float{border-radius:12px;box-shadow:0 20px 44px rgba(0,0,0,.38)}
+.sc-expand.sc-float.open{box-shadow:0 30px 80px rgba(0,0,0,.55)}
+.sc-expandh{display:flex;align-items:center;gap:8px;flex:none;padding-bottom:8px;border-bottom:1px solid var(--dsw-alias-border-l1);margin-bottom:8px;
+  /* 标题栏是抓手：拖动时不许选中文字，把它自己吃掉（拖完那一下 click 由 85-boardview 吃） */
+  cursor:move;-webkit-user-select:none;user-select:none;touch-action:none}
+.sc-expand.sc-full .sc-expandh{cursor:default}
+.sc-expand h3{margin:0;font-size:16px;font-weight:700;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sc-expandx{border:none;background:transparent;color:var(--dsw-alias-label-secondary);font-size:17px;line-height:1;cursor:pointer;font-family:inherit;padding:0 2px;flex:none}
 .sc-expandx:hover{color:var(--dsw-alias-label-primary)}
+/* 标题栏上的小按钮（图钉 / 全屏-浮动） */
+.sc-expandb{border:none;background:transparent;color:var(--dsw-alias-label-secondary);font-size:11px;line-height:1;font-family:inherit;cursor:pointer;padding:3px 5px;border-radius:6px;flex:none;display:inline-flex;align-items:center}
+.sc-expandb:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}
+.sc-expandb.on{color:var(--dsw-alias-brand-primary)}
+/* 右下角的缩放手柄：只是几道斜线，够认出「这里能拖大」就行 */
+.sc-expandgrip{position:absolute;right:2px;bottom:2px;width:16px;height:16px;cursor:nwse-resize;touch-action:none;-webkit-user-select:none;user-select:none;border-bottom-right-radius:11px;
+  background:
+    linear-gradient(135deg,transparent 0 52%,var(--dsw-alias-border-l2) 52% 64%,transparent 64%),
+    linear-gradient(135deg,transparent 0 74%,var(--dsw-alias-border-l2) 74% 86%,transparent 86%)}
 .sc-expandbody{flex:1;min-height:0;overflow:auto;font-size:12.5px;line-height:1.75}
+
+/* 页签（浮层的「卡片 | 文档」、编辑弹窗的「字段 | 文档」） */
+.sc-tabs{display:flex;gap:2px;flex:none;margin-bottom:8px;border-bottom:1px solid var(--dsw-alias-border-l1)}
+.sc-modalbox > .sc-tabs{padding:0 16px;margin-bottom:0;border-bottom:1px solid var(--dsw-alias-border-l1)}
+.sc-tab{border:none;border-bottom:2px solid transparent;background:transparent;color:var(--dsw-alias-label-secondary);font-size:12px;font-family:inherit;padding:4px 10px;cursor:pointer;border-radius:6px 6px 0 0;white-space:nowrap}
+.sc-tab:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-1)}
+.sc-tab.on{color:var(--dsw-alias-brand-primary);border-bottom-color:var(--dsw-alias-brand-primary);font-weight:600}
+
+/* 卡片文档编辑器（src/92-doc.js）：等宽、跟着容器高、自己滚。
+   两处复用：展开浮层的「文档」页签、编辑弹窗的「文档」页签。 */
+.sc-doc{display:flex;flex-direction:column;gap:6px;flex:1;min-height:0;height:100%}
+.sc-docbar{display:flex;align-items:center;gap:6px;flex:none}
+.sc-docstate{flex:none;font-size:10.5px;color:var(--dsw-alias-label-secondary);font-family:ui-monospace,Menlo,Consolas,monospace;white-space:nowrap}
+.sc-docstate.dirty{color:var(--dsw-alias-brand-primary)}
+.sc-docstate.bad{color:var(--dsw-alias-state-error-primary)}
+.sc-docpath{flex:none;font-size:10.5px;color:var(--dsw-alias-label-secondary);font-family:ui-monospace,Menlo,Consolas,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 「正在写：勿忘我」—— 台词 / 旁白状态下状态栏里那枚小标签。
+   Enter 结束这个角色、Shift+Enter 继续同一个角色，鼠标悬停有说明。 */
+.sc-docrole{flex:none;font-size:10.5px;line-height:16px;padding:0 8px;border-radius:999px;white-space:nowrap;color:var(--dsw-alias-brand-primary);background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l2)}
+/* 菜单里的筛选框（文档的人物菜单）：菜单宽 172 起，别让它撑破 */
+.sc-menuinput{margin:2px 0 4px;width:100%;font-size:12px;padding:4px 8px}
+/* 文档里的输入区：**两层** —— 底下 .sc-dochl 是彩色的高亮层，上面 .sc-docarea 的
+   文字是透明的（caret-color 单独给），用户看到的就是「名字有颜色」。
+   两层必须有**同一套排版**：字体 / 字号 / 行高 / 内边距 / letter-spacing / 折行规则
+   一条不差，差一点光标和文字就错位。所以下面这两条规则成对写，改一条就得改另一条。
+   滚动条那几像素由 JS 按实测宽度补给高亮层（见 92-doc.js 的 paddingRight effect）。 */
+.sc-dochlwrap{position:relative;flex:1;min-height:160px;box-sizing:border-box;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-base);border-radius:8px;overflow:hidden}
+.sc-dochlwrap:focus-within{border-color:var(--dsw-alias-brand-primary)}
+.sc-dochl,.sc-docarea{box-sizing:border-box;position:absolute;left:0;top:0;width:100%;height:100%;margin:0;border:none;padding:8px 10px;font-size:12px;line-height:1.75;font-family:ui-monospace,Menlo,Consolas,monospace;letter-spacing:normal;white-space:pre-wrap;word-break:break-word;overflow-wrap:break-word}
+.sc-dochl{overflow:hidden;color:var(--dsw-alias-label-primary);pointer-events:none}
+.sc-docarea{display:block;overflow-y:scroll;overflow-x:hidden;background:transparent;color:transparent;caret-color:var(--dsw-alias-label-primary);resize:none;outline:none}
+.sc-docarea::-webkit-scrollbar{width:10px}
+.sc-docarea::-webkit-scrollbar-thumb{background:var(--dsw-alias-border-l2);border-radius:5px}
+.sc-docarea::-webkit-scrollbar-track{background:transparent}
+.sc-docarea::placeholder{color:var(--dsw-alias-label-secondary);opacity:.8}
+/* 选区：文字是透明的，所以底色必须**半透明** —— 实心色块会把底下高亮层的字整个盖住，
+   看起来就是「一坨色块」。半透明的牌子色既看得见选区，又透得出字。 */
+.sc-docarea::selection{background:rgba(127,160,255,.35);background:color-mix(in srgb,var(--dsw-alias-brand-primary) 30%,transparent);color:transparent}
+/* 名字只染颜色、**不换字重**：粗体在两层的字宽可能不一致，一不一致折行位置就错开。
+   旁白行首那两个全角空格暗一点，看着像缩进。 */
+.sc-docquiet{color:var(--dsw-alias-label-secondary);opacity:.55}
+.sc-docro{flex:none;font-size:10.5px;line-height:1.55;color:var(--dsw-alias-state-error-primary)}
+/* 文档页要占满：让里面的 textarea 自己滚（字段页 / 卡片页照旧整块滚） */
+.sc-expandbody.sc-docbody{display:flex;flex-direction:column;overflow:hidden}
+.sc-modalb.sc-modalfill{display:flex;flex-direction:column;overflow:hidden}
+/* 「这张卡有文档」的小角标（画布卡片与方片页卡片的右上角）。
+   往外挪 4px：节点卡右上角是时间文字，摆在卡片里面会把它挤走；
+   卡片的 overflow 是 visible，露在角上正好。 */
+.sc-docdot{position:absolute;right:-4px;top:-4px;width:10px;height:10px;border-radius:50%;background:var(--sc-accent,var(--dsw-alias-brand-primary));box-shadow:0 0 0 2px var(--dsw-alias-bg-base);pointer-events:none;z-index:3}
+
+/* ── 引用卡（「存档卡抽屉」拖进来的那些） ─────────────────────────────────────
+   它不是这块画布上的卡：不连线、不参与自动排列、双击只有只读详情。
+   「引用」角标挂在**左下角** —— 右上角是「有文档」.sc-docdot 的地盘，两个不许撞。 */
+.sc-refcard{border-style:dashed}
+.sc-refkind{flex:none;font-size:10.5px;letter-spacing:.08em;color:var(--dsw-alias-label-secondary)}
+.sc-refbadge{position:absolute;left:-4px;bottom:-4px;padding:0 5px;border-radius:999px;font-size:9.5px;line-height:15px;
+  color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-base);border:1px dashed var(--dsw-alias-border-l2);pointer-events:none}
+.sc-reftag{border-style:dashed;color:var(--dsw-alias-label-secondary)}
+
+/* 存档卡抽屉：浮在画布右侧、不挤布局；它上面的按下/拖动不是画布手势 */
+.sc-drawer{position:absolute;right:10px;top:10px;bottom:10px;z-index:40;box-sizing:border-box;padding:0 10px 10px;
+  border-radius:12px;border:1px solid var(--dsw-alias-border-l2);
+  background:var(--dsw-alias-bg-base);box-shadow:0 18px 44px rgba(0,0,0,.4);
+  overflow-y:auto;overscroll-behavior:contain;-webkit-user-select:none;user-select:none}
+.sc-drawersticky{position:sticky;top:0;z-index:2;background:var(--dsw-alias-bg-base);padding:10px 0 6px}
+.sc-drawerhead{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;padding-bottom:6px}
+.sc-drawerhead2{font-size:10.5px;letter-spacing:.08em;font-weight:600;color:var(--dsw-alias-label-secondary);padding:8px 2px 4px}
+.sc-draweritem{display:flex;align-items:baseline;gap:6px;padding:5px 8px;border-radius:8px;border:1px solid transparent;cursor:grab;touch-action:none}
+.sc-draweritem:hover{background:var(--dsw-alias-bg-layer-1);border-color:var(--dsw-alias-border-l1)}
+.sc-draweritemtitle{flex:1;min-width:0;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sc-draweritemkind{flex:none;font-size:10px;color:var(--dsw-alias-label-secondary)}
+.sc-drawerhint{font-size:10.5px;line-height:1.5;color:var(--dsw-alias-label-secondary);padding-top:8px}
+/* 从抽屉拖出来的幽灵：跟目标卡一样大、半透明 */
+.sc-ghost.reffrom{opacity:.7;border:1px dashed var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-bg-base);display:flex;align-items:center;justify-content:center}
 
 /* 右键菜单 */
 .sc-menuback{position:fixed;inset:0;z-index:99996}

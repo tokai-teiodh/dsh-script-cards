@@ -137,13 +137,31 @@ function CardsPanel(props) {
     if (!sameDirs(stored, dirs)) { setDirs(stored); return undefined }
     api.setDirs(dirs)
     return load(cwd, false)
-  }, [cwd, dirs.archive, dirs.cards, dirs.sub])
+  }, [cwd, dirs.archive, dirs.cards, dirs.sub, dirs.docs])
 
   function refresh() { if (cwd) load(cwd, true) }
 
   function setViewAndSave(v) {
     setView(v)
     saveUi(Object.assign({}, ui, { view: v }))
+  }
+
+  /**
+   * 展开浮层的几何 / 模式改了就写回 localStorage（用户要求「拖动、缩放、切模式后记住」）。
+   * 铁律照旧：**读出整份记录 → 改字段 → 整份写回** —— 只写 windows 一个字段会把图谱、
+   * 星标、目录名全冲掉。
+   */
+  function saveWindow(key, geo) {
+    const all = Object.assign({}, (ui && ui.windows) || {})
+    const old = all[key] || {}
+    all[key] = Object.assign({}, old, geo)
+    saveUi(Object.assign({}, ui, { windows: all }))
+  }
+
+  /** 文档保存/清空之后，卡片上那个「有文档」角标要跟着变。 */
+  function setCardDoc(card, has) {
+    const k = cardKey(card)
+    setCards(cards.map(function (c) { return cardKey(c) === k ? Object.assign({}, c, { hasDoc: !!has }) : c }))
   }
 
   function findCard(k) { return cards.concat(archives).filter(function (c) { return cardKey(c) === k })[0] || null }
@@ -196,25 +214,49 @@ function CardsPanel(props) {
   }
 
   function deleteCard(card) {
-    setDialog({
-      kind: 'confirm', title: '删除卡片文件？',
-      text: '会真的删掉 ' + dirs.archive + '/' + (card.kind === 'archive' ? dirs.sub : dirs.cards) + '/' + card.file + '。删掉之后画布上对应的记录也会一起清掉。',
-      okLabel: '删除',
-      onOk: function () {
-        setDialog(null)
-        api.deleteCard(cwd, card.kind, card.file).then(function () {
-          setCards(cards.filter(function (c) { return cardKey(c) !== cardKey(card) }))
-          const next = {
-            version: 1, chapters: graph.chapters.slice(), nodes: Object.assign({}, graph.nodes), edges: graph.edges.slice(),
-          }
-          delete next.nodes[cardKey(card)]
-          next.chapters = next.chapters.filter(function (k) { return k !== cardKey(card) })
-          next.edges = next.edges.filter(function (e) { return e.from !== cardKey(card) && e.to !== cardKey(card) })
-          saveGraph(next)
-          pushNotice({ text: '已删除 ' + card.file, kind: 'info' })
-        }).catch(function (e) { pushNotice('删除失败：' + msgOf(e)) })
-      },
-    })
+    const dirName = card.kind === 'archive' ? dirs.sub : dirs.cards
+    const cardPath = dirs.archive + '/' + dirName + '/' + card.file
+    const docPath = dirs.archive + '/' + dirs.docs + '/' + card.file
+    function doDelete(withDoc) {
+      setDialog(null)
+      api.deleteCard(cwd, card.kind, card.file).then(function () {
+        setCards(cards.filter(function (c) { return cardKey(c) !== cardKey(card) }))
+        const next = {
+          version: 1, chapters: graph.chapters.slice(), nodes: Object.assign({}, graph.nodes), edges: graph.edges.slice(),
+        }
+        delete next.nodes[cardKey(card)]
+        next.chapters = next.chapters.filter(function (k) { return k !== cardKey(card) })
+        next.edges = next.edges.filter(function (e) { return e.from !== cardKey(card) && e.to !== cardKey(card) })
+        saveGraph(next)
+        pushNotice({
+          text: '已删除 ' + card.file + (withDoc ? '（连同它的文档）' : '（文档留着）'),
+          kind: 'info',
+        })
+        // 卡片删掉之后再删文档：卡片那一步失败的话，文档不该先没
+        if (withDoc) return dropDocs([card])
+        return true
+      }).catch(function (e) { pushNotice('删除失败：' + msgOf(e)) })
+    }
+    docsOf([card]).then(function (withDocs) {
+      if (!withDocs.length) {
+        // 没有文档（或文档是空的）→ 保持原来的流程，不打扰
+        setDialog({
+          kind: 'confirm', title: '删除卡片文件？',
+          text: '会真的删掉 ' + cardPath + '。删掉之后画布上对应的记录也会一起清掉。',
+          okLabel: '删除',
+          onOk: function () { doDelete(false) },
+        })
+        return
+      }
+      setDialog({
+        kind: 'confirm', title: '删除卡片文件？',
+        text: '会真的删掉 ' + cardPath + '。这张卡片还有文档 ' + docPath + '：要连文档一起删掉吗？',
+        okLabel: '一起删除文档',
+        extraLabel: '只删卡片、留着文档',
+        onExtra: function () { doDelete(false) },
+        onOk: function () { doDelete(true) },
+      })
+    }).catch(function (e) { pushNotice('读取文档失败：' + msgOf(e)) })
   }
 
   // 画布上框选出一组之后的批量删除：确认一次，删完只写一次图谱。
@@ -223,25 +265,59 @@ function CardsPanel(props) {
     keys.forEach(function (k) { want[k] = true })
     const list = cards.filter(function (c) { return want[cardKey(c)] })
     if (!list.length) return
-    setDialog({
-      kind: 'confirm', title: '删除这 ' + list.length + ' 张卡片文件？',
-      text: '会真的删掉 ' + list.map(function (c) { return c.file }).join('、') + '。删掉之后画布上对应的记录也会一起清掉。',
-      okLabel: '删除',
-      onOk: function () {
-        setDialog(null)
-        Promise.all(list.map(function (c) { return api.deleteCard(cwd, c.kind, c.file) })).then(function () {
-          setCards(cards.filter(function (c) { return !want[cardKey(c)] }))
-          const next = {
-            version: 1, chapters: graph.chapters.filter(function (k) { return !want[k] }),
-            nodes: Object.assign({}, graph.nodes), edges: graph.edges.slice(),
-          }
-          for (const k of Object.keys(want)) delete next.nodes[k]
-          next.edges = next.edges.filter(function (e) { return !want[e.from] && !want[e.to] })
-          saveGraph(next)
-          pushNotice({ text: '已删除 ' + list.length + ' 张卡片', kind: 'info' })
-        }).catch(function (e) { pushNotice('删除失败：' + msgOf(e)) })
-      },
-    })
+    const names = list.map(function (c) { return c.file }).join('、')
+    function doDelete(withDoc) {
+      setDialog(null)
+      Promise.all(list.map(function (c) { return api.deleteCard(cwd, c.kind, c.file) })).then(function () {
+        setCards(cards.filter(function (c) { return !want[cardKey(c)] }))
+        const next = {
+          version: 1, chapters: graph.chapters.filter(function (k) { return !want[k] }),
+          nodes: Object.assign({}, graph.nodes), edges: graph.edges.slice(),
+        }
+        for (const k of Object.keys(want)) delete next.nodes[k]
+        next.edges = next.edges.filter(function (e) { return !want[e.from] && !want[e.to] })
+        saveGraph(next)
+        pushNotice({ text: '已删除 ' + list.length + ' 张卡片' + (withDoc ? '（连同它们的文档）' : '（文档留着）'), kind: 'info' })
+        if (withDoc) return dropDocs(list)
+        return true
+      }).catch(function (e) { pushNotice('删除失败：' + msgOf(e)) })
+    }
+    docsOf(list).then(function (withDocs) {
+      if (!withDocs.length) {
+        setDialog({
+          kind: 'confirm', title: '删除这 ' + list.length + ' 张卡片文件？',
+          text: '会真的删掉 ' + names + '。删掉之后画布上对应的记录也会一起清掉。',
+          okLabel: '删除',
+          onOk: function () { doDelete(false) },
+        })
+        return
+      }
+      setDialog({
+        kind: 'confirm', title: '删除这 ' + list.length + ' 张卡片文件？',
+        text: '会真的删掉 ' + names + '。其中 ' + withDocs.length + ' 张有文档（' +
+          withDocs.map(function (c) { return c.file }).join('、') + '）：要连文档一起删掉吗？',
+        okLabel: '一起删除文档',
+        extraLabel: '只删卡片、留着文档',
+        onExtra: function () { doDelete(false) },
+        onOk: function () { doDelete(true) },
+      })
+    }).catch(function (e) { pushNotice('读取文档失败：' + msgOf(e)) })
+  }
+
+  /** 这一批卡片里，哪几张**真的有非空文档**（空文件不算，读不到的按没有算）。 */
+  function docsOf(list) {
+    return Promise.all(list.map(function (c) {
+      return api.readDoc(cwd, c.file).then(function (res) {
+        return (res && res.exists && String(res.text || '').trim()) ? c : null
+      }).catch(function () { return null })
+    })).then(function (states) { return states.filter(Boolean) })
+  }
+
+  /** 用户选了「一起删除文档」时，把这几张卡片的文档删掉。删不掉也不挡卡片那一步的提示。 */
+  function dropDocs(list) {
+    return Promise.all(list.map(function (c) {
+      return api.deleteDoc(cwd, c.file).catch(function () { return false })
+    }))
   }
 
   function retype(card, type) {
@@ -254,6 +330,26 @@ function CardsPanel(props) {
       setCards(cards.map(function (c) { return cardKey(c) === cardKey(card) ? entryOfText(card.kind, card.file, text) : c }))
       pushNotice({ text: '已改为' + typeLabel(type) + '卡片', kind: 'info' })
     }).catch(function (e) { pushNotice('改写失败：' + msgOf(e)) })
+  }
+
+  /**
+   * 给人物卡设「角色色」：写进卡片 frontmatter 的 `color`（跟项目进 git），
+   * 空串＝清除（回到 tags 里的印象色）。
+   * 写完顺手把这张卡片换掉，`speakers` 是从 cards 算出来的 —— 所以文档里那个角色
+   * 名字的颜色**立刻**跟着变，不用另存一份颜色表。
+   */
+  function setCardColor(card, color) {
+    const next = /^#[0-9a-fA-F]{3,8}$/.test(String(color || '').trim()) ? String(color).trim() : ''
+    const text = renderFront({
+      id: card.id, type: card.type, title: card.title, code: card.code, chapter: card.chapter,
+      mode: card.mode, when: card.when, order: card.order === null ? '' : card.order,
+      summary: card.summary, tags: card.tags, color: next, updated: nowStamp(),
+    }) + '\n' + card.body
+    api.writeCard(cwd, card.kind, card.file, text).then(function () {
+      const entry = entryOfText(card.kind, card.file, text)
+      setCards(cards.map(function (c) { return cardKey(c) === cardKey(card) ? entry : c }))
+      pushNotice({ text: (next ? '角色色 ' + next : '已清除角色色') + ' · ' + card.file, kind: 'info' })
+    }).catch(function (e) { pushNotice('写入失败：' + msgOf(e)) })
   }
 
   function newCardAt(type, point, chapterKey, mode) {
@@ -284,6 +380,12 @@ function CardsPanel(props) {
   const archiveCards = cards.filter(function (c) { return !isBranchType(c.type) })
   const branchCards = cards.filter(function (c) { return isBranchType(c.type) })
   const selected = sel ? findCard(sel) : null
+  // 文档里那套台词结构的「人物」清单：存档族里 type=character 的卡片，名字取标题里
+  // 第一个括号之前的那一段（见 30-model.js 的 speakerName），颜色取 frontmatter 的
+  // color、没有就读 tags 里的 `印象色#RRGGBB`。台词素材卡不算说话的人。
+  // 这一份数据同时喂「文档里名字着色」和「方片页给人物卡设角色色」—— 只有一个来源，
+  // 所以在方片页改完颜色，文档里那个角色的名字**立刻**跟着变。
+  const speakers = speakerList(archiveCards)
   // 「简介自动生成」走模型：面板只负责把缺简介的卡片点出来，真正的生成由助手
   // 在扫描后批量写回 frontmatter，所以这里给一条可操作的提示。
   const noSummary = archiveCards.filter(function (c) { return !String(c.summary || '').trim() }).length
@@ -326,16 +428,27 @@ function CardsPanel(props) {
       onStar: function (c, on) { saveUi(Object.assign({}, ui, { star: toggleIn(ui.star, cardKey(c), on) })) },
       onPin: function (c, on) { saveUi(Object.assign({}, ui, { pin: toggleIn(ui.pin, cardKey(c), on) })) },
       onRefresh: refresh,
+      // 方片页给「人物」卡设角色色（右键卡片）：色卡复用画布那一套
+      swatches: swatchesOf(ui), onEditSwatches: function () { setDialog({ kind: 'swatches' }) },
+      onSetColor: setCardColor,
       detailOpen: !!selected, detailCard: selected, detailBody: selected && selected.body, detailLoading: false,
     })
   } else {
     screen = React.createElement(BoardView, {
       cards: branchCards, graph: graph, ui: ui, narrow: narrow,
+      // api / root：展开浮层里的「文档」页签要自己读写文档文件
+      api: api, root: cwd,
+      // 引用卡要把「别的级别」的卡片也解析出来（存档卡、其它章节的节点卡），所以整份 cards 都给
+      allCards: cards,
+      // 文档里录台词要能选人物（浮窗那条线）
+      speakers: speakers,
       swatches: swatchesOf(ui), onEditSwatches: function () { setDialog({ kind: 'swatches' }) },
       clipboard: clipboard, onClipboard: setClipboard,
       onGraph: saveGraph,
       onRefresh: refresh,
       onNotice: pushNotice,
+      onWindowSave: saveWindow,
+      onDocChange: setCardDoc,
       onOpenCard: function (c) { setSel(cardKey(c)); setDialog({ kind: 'edit', card: c }) },
       onEditCard: function (c) { setDialog({ kind: 'edit', card: c }) },
       onDeleteCard: deleteCard,
@@ -399,6 +512,11 @@ function CardsPanel(props) {
       key: 'edit', card: dialog.card,
       chapters: branchCards.filter(function (c) { return c.type === 'chapter' }),
       chapterOf: chapterOf, modeOf: modeOf,
+      // 新卡片还没有文件（文件是保存时才生成的），所以不给「文档」页签
+      isNew: !!dialog.isNew,
+      // 编辑弹窗那条线也要能选人物（同一个 DocEditor）
+      speakers: speakers,
+      api: api, root: cwd, onNotice: pushNotice, onDocChange: setCardDoc,
       onClose: function () { setDialog(null) },
       onDelete: function (c) { setDialog(null); deleteCard(c) },
       onSave: function (card, fields, done) {
@@ -444,6 +562,9 @@ function CardsPanel(props) {
   if (dialog && dialog.kind === 'confirm') {
     dialogs.push(React.createElement(ConfirmDialog, {
       key: 'confirm', title: dialog.title, text: dialog.text, okLabel: dialog.okLabel,
+      // 第三条出路（删卡片时「只删卡片、留着文档」）。ConfirmDialog 只在给了 extraLabel
+      // 时才画它，所以普通确认框的形状一个字都没变。
+      extraLabel: dialog.extraLabel, onExtra: dialog.onExtra,
       onClose: function () { setDialog(null) }, onOk: dialog.onOk,
     }))
   }

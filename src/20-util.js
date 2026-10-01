@@ -40,6 +40,21 @@ function clamp(v, lo, hi) {
   return n < lo ? lo : (n > hi ? hi : n)
 }
 
+// 显示宽度（只用来算「续行要补几个全角空格」）：CJK 记 1、ASCII 记 0.5。
+// 半角片假名（U+FF61–U+FF9F）按 1 算 —— 名字里出现它的概率极低，不值得为它多一条分支。
+function textWidth(s) {
+  let w = 0
+  for (const ch of String(s == null ? '' : s)) w += ch.codePointAt(0) < 0x80 ? 0.5 : 1
+  return w
+}
+
+/** n 个全角空格（旁白的行首、台词的续行缩进都用它）。 */
+function wideSpaces(n) {
+  let out = ''
+  for (let i = 0; i < Math.max(0, Math.round(n)); i++) out += '　'
+  return out
+}
+
 // 画面缩放只走这几档（跟浏览器缩放菜单一个思路）。自由缩放会把整块画布按一个
 // 奇怪的比例重新栅格化，越缩越糊；整数/常见档位至少是清楚的。
 const ZOOM_STEPS = [0.25, 0.33, 0.5, 0.67, 0.8, 1, 1.25, 1.5, 2]

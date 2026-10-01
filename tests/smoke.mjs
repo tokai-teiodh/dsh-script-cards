@@ -27,6 +27,7 @@ const ROOT = 'C:/proj'
 const ARCHIVE_DIR = ROOT + '/剧本档案'
 const CARDS_DIR = ARCHIVE_DIR + '/卡片'
 const ARCH_DIR = ARCHIVE_DIR + '/归档'
+const DOCS_DIR = ARCHIVE_DIR + '/文档'
 const GRAPH = ARCHIVE_DIR + '/分支.json'
 
 const G1 = 'card/chapter-g1.md'
@@ -86,6 +87,13 @@ function makeFiles() {
   card('decision-c1.md', { id: 'decision-c1', type: 'decision', title: '决定甲', summary: '已拍板', tags: '创作决定' })
   card('reference-r1.md', { id: 'reference-r1', type: 'reference', title: '参考甲', summary: '参考资料', tags: '参考' })
   f[ARCH_DIR + '/2026-01-02-归档.md'] = md({ id: 'a1', type: 'archive', title: '一次归档', summary: '归档简介', tags: '归档' })
+  // 每张卡片一份的独立文档：章节 / 节点两类才有入口，这里给 G1 / N2 / N3 各一份。
+  // N1 故意没有文档（验「还没有文档」），condition 那份是**空文件**（空文档不算有文档 ——
+  // 保存空内容时本来就会把文件删掉，见 50-api 的 writeDoc）。
+  f[DOCS_DIR + '/chapter-g1.md'] = '# 章节甲 · 文档\n\n这一章的写作笔记：开场要先冷。\n'
+  f[DOCS_DIR + '/node-n2.md'] = '节点二的文档：这里放备注。\n'
+  f[DOCS_DIR + '/node-n3.md'] = '节点三的文档。\n'
+  f[DOCS_DIR + '/condition-c1.md'] = ''
   f[GRAPH] = JSON.stringify({
     version: 1,
     chapters: [G1, G2],
@@ -137,14 +145,19 @@ function makeBridge() {
       writes.push({ path: p, text: String(text) })
       return { ok: true, value: { ok: true } }
     },
-    async fsMkdir() { return { ok: true, value: { ok: true } } },
+    async fsMkdir(root, dir) {
+      calls.push({ method: 'fsMkdir', root, dir })
+      return { ok: true, value: { ok: true } }
+    },
     async fsRemove(root, p) {
       delete files[p]
       removes.push(p)
       return { ok: true, value: { ok: true } }
     },
     async fsStat(root, p) {
-      return { ok: true, value: { exists: Object.prototype.hasOwnProperty.call(files, p), type: 'file', size: 0 } }
+      // 大小要如实报：面板靠它判断「空文档不算有文档」。
+      const has = Object.prototype.hasOwnProperty.call(files, p)
+      return { ok: true, value: { exists: has, type: 'file', size: has ? String(files[p]).length : 0 } }
     },
   }
 }
@@ -330,21 +343,40 @@ await tick()
 const movedRec = JSON.parse(files[GRAPH]).nodes[N2]
 ok(movedRec && movedRec.cx !== 280, 'the dragged position was written back to the graph file', movedRec)
 
-// ── G. expand: centre, grow, blur the background ─────────────────────────────
-console.log('\nG. expand animation')
+// ── G. 展开态默认是浮动窗口；全屏遮罩模式仍然在（可切换） ──────────────────────
+// 用户拍板：默认改成可拖动 / 可缩放的**浮动窗口**；老的「全屏遮罩 + 背景虚化」不删，
+// 作为每个窗口自己的一种模式留着。所以这里先验浮动默认（画布不虚化、没有遮罩），
+// 再验切到全屏才出现遮罩与虚化 —— 原先那两条「一展开就虚化 / 就有遮罩」的断言
+// 编码的是旧行为，随这次改动一起改。
+console.log('\nG. expand: a floating window by default (fullscreen scrim is a mode)')
 const expandTarget = view.findAll('sc-card').filter((n) => n.props['data-key'] === N1)[0]
 view.fire(expandTarget, 'onDoubleClick', {})
 await tick()
-ok(String(view.find('sc-stage').props.className).indexOf('blur') === -1, 'phase 1: not blurred yet')
+ok(String(view.find('sc-stage').props.className).indexOf('blur') === -1, 'phase 1: the canvas is not blurred')
 await wait(60)
-ok(String(view.find('sc-stage').props.className).indexOf('blur') !== -1, 'phase 2: the canvas (and other cards) blur')
+ok(String(view.find('sc-stage').props.className).indexOf('blur') === -1, 'a floating window leaves the canvas readable (no blur)')
 const overlay = view.findMaybe('sc-expand')
-ok(!!overlay, 'the expanded layer exists')
-ok(String(overlay.props.className).indexOf('open') !== -1, 'the expanded layer is open')
+ok(!!overlay, 'the expanded window exists')
+ok(String(overlay.props.className).indexOf('open') !== -1, 'the expanded window is open')
+ok(String(overlay.props.className).indexOf('sc-float') !== -1, 'and it defaults to the floating mode')
+eq(view.findMaybe('sc-scrim'), null, 'floating mode draws no backdrop scrim (the canvas stays usable)')
 has(view.textOf(overlay), '角色', 'expanded view lists the characters section')
 has(view.textOf(overlay), '场景', 'expanded view lists the scene section')
 has(view.textOf(overlay), '内容', 'expanded view lists the content section')
-ok(!!view.findMaybe('sc-scrim'), 'a backdrop scrim is rendered')
+eq(Number(overlay.props.style.width), 460, 'the window keeps the shared 460 width')
+eq(Number(overlay.props.style.height), 430, 'and the shared height')
+// 切到全屏遮罩：老行为原样还在
+const modeBtn = () => view.findAll('sc-expandb').filter((n) => /^(全屏|浮动)$/.test(view.textOf(n)))[0]
+view.click(modeBtn())
+await tick()
+ok(!!view.findMaybe('sc-scrim'), 'switching to 全屏 brings the backdrop scrim back')
+ok(String(view.find('sc-stage').props.className).indexOf('blur') !== -1, 'and the canvas (other cards) blur again')
+ok(String(view.find('sc-expand').props.className).indexOf('sc-full') !== -1, 'the window is marked as fullscreen')
+eq(view.textOf(modeBtn()), '浮动', 'the toggle now offers the way back to the floating mode')
+view.click(modeBtn())
+await tick()
+eq(view.findMaybe('sc-scrim'), null, 'switching back to 浮动 removes the scrim again')
+ok(String(view.find('sc-stage').props.className).indexOf('blur') === -1, 'and un-blurs the canvas')
 
 // ── H. edit in the overlay and write back to the card file ───────────────────
 console.log('\nH. edit -> write back to the card file')
@@ -1307,6 +1339,9 @@ view.fire(view.find('sc-canvas'), 'onPointerDown', {
 view.fire(groupB, 'onContextMenu', { clientX: rPos.clientX, clientY: rPos.clientY })
 await tick()
 has(view.text(), '已选 ' + pickedKeys.length + ' 张', 'right-clicking inside the selection gives a batch menu')
+// 真实浏览器里右键**总要松开**：不补这一下，marqueeRef 会一直挂着，后面所有画布手势
+// （平移 / 框选）都会被它吃掉 —— 无头测试里就表现为「拖画布没反应」。
+view.window('pointerup', { clientX: rPos.clientX, clientY: rPos.clientY })
 // 批量删除：一个确认框盖住整组（先看一眼再取消，别真删，后面的断言还要用这些卡片）
 const delMany = view.findAll('sc-menuitem').filter((n) => view.textOf(n).indexOf('删除这 ' + pickedKeys.length + ' 张卡片文件') !== -1)[0]
 ok(!!delMany, 'the batch menu can delete the whole selection in one go')
@@ -1325,6 +1360,8 @@ view.fire(view.find('sc-canvas'), 'onPointerDown', {
 })
 view.fire(view.findAll('sc-card').filter((n) => n.props['data-key'] === pickedKeys[1])[0], 'onContextMenu', { clientX: rPos.clientX, clientY: rPos.clientY })
 await tick()
+view.window('pointerup', { clientX: rPos.clientX, clientY: rPos.clientY })
+await tick()
 const outMany = view.findAll('sc-menuitem').filter((n) => view.textOf(n).indexOf('移出画布') !== -1)[0]
 ok(!!outMany, 'the batch menu can put the whole selection back in the dock')
 view.click(outMany)
@@ -1333,6 +1370,1378 @@ await tick()
 const gAfterOut = JSON.parse(files[GRAPH])
 eq(pickedKeys.filter((k) => gAfterOut.nodes[k].cx === null).length, pickedKeys.length, 'all of them left the canvas')
 ok(view.findAll('sc-card').filter((n) => String(n.props.className).indexOf(' on') !== -1).length === 0, 'and the selection is cleared')
+
+// ── AG. 每张卡片一份独立文档（只有章节 / 节点有入口） ─────────────────────────
+// 用户的原话背景：「章节卡片和节点卡片要各有一份对应的文档，能直接在 dsh 应用里改」。
+// 文档是**独立文件**（<档案目录>/<文档子目录>/<卡片文件名>），不是卡片正文；
+// 空文档不落盘：内容 trim 后为空时，文件已存在就删掉、不存在就什么都不做。
+console.log('\nAG. one document per card (chapter / node only)')
+const kidsOf = (node) => {
+  const out = []
+  const visit = (n) => { if (!n) return; out.push(n); if (n.children) for (const c of n.children) visit(c) }
+  visit(node)
+  return out
+}
+const cardOf = (k) => view.findAll('sc-card').filter((n) => n.props['data-key'] === k)[0]
+const badgeOf = (k) => kidsOf(cardOf(k)).filter((n) => n.kind === 'host' && String(n.props.className || '').indexOf('sc-docdot') !== -1)[0]
+const winOf = (k) => view.findAll('sc-expand').filter((n) => n.props['data-win'] === k)[0]
+const tabOf = (label) => view.findAll('sc-tab').filter((n) => view.textOf(n) === label)[0]
+const btnOf = (label) => view.findAll('sc-btn').filter((n) => view.textOf(n) === label)[0]
+// AF 里有一组卡片被移出画布了；自动排列会把这一层全部放回来
+view.click(view.findAll('sc-btn').filter((n) => view.textOf(n) === '自动排列')[0])
+await tick()
+await tick()
+ok(!!cardOf(N2), 'node N2 is on the canvas again')
+ok(!!badgeOf(N2), 'a card that has a document shows the little corner badge')
+ok(!badgeOf(N1), 'a card without one shows nothing')
+ok(!badgeOf('card/condition-c1.md'), 'an empty document file does not count as "has a document"')
+
+view.fire(cardOf(N2), 'onDoubleClick', {})
+await wait(60)
+ok(!!winOf(N2), 'the node window is open')
+ok(!!tabOf('卡片') && !!tabOf('文档'), 'the window offers 卡片 | 文档 tabs')
+eq(view.findMaybe('sc-docarea'), null, 'the card tab is the default — the document editor is not mounted yet')
+view.click(tabOf('文档'))
+await tick()
+const docArea = view.findMaybe('sc-docarea')
+ok(!!docArea, 'switching to 文档 mounts the DocEditor')
+eq(docArea.props.value, files[DOCS_DIR + '/node-n2.md'], 'the editor loaded the document from disk')
+ok(view.text().indexOf('剧本档案/文档/node-n2.md') !== -1, 'the status line shows the relative path')
+has(view.text(), '已有文档（未改动）', 'and says the document has not been touched yet')
+view.fire(docArea, 'onChange', { target: { value: '节点二的文档：改过一版。\n' } })
+await tick()
+has(view.text(), '● 未保存', 'editing marks the buffer dirty')
+const writesBeforeDoc = writes.length
+view.fire(view.findMaybe('sc-docarea'), 'onKeyDown', { key: 's', ctrlKey: true, stopPropagation() {}, preventDefault() {} })
+await tick()
+await tick()
+const docWrite = writes.filter((w) => w.path === DOCS_DIR + '/node-n2.md').pop()
+ok(!!docWrite, 'Ctrl+S wrote the document file')
+ok(!!docWrite && docWrite.text.indexOf('改过一版') !== -1, 'with what was typed into the editor', docWrite && docWrite.text)
+eq(writes.length, writesBeforeDoc + 1, 'and the card file was not touched (the document is a separate file)')
+ok(!!calls.filter((c) => c.method === 'fsMkdir' && c.dir === DOCS_DIR).pop(), 'the document subdirectory is created before the first write (like cards/sub)')
+has(view.text(), '已保存 ', 'the status line says when it was saved')
+ok(view.text().indexOf('● 未保存') === -1, 'and the dirty mark is gone')
+
+// 空文档不落盘：清空 → 保存 = 把文件删掉
+view.fire(view.findMaybe('sc-docarea'), 'onChange', { target: { value: '   ' } })
+await tick()
+view.click(btnOf('保存'))
+await tick()
+await tick()
+ok(!Object.prototype.hasOwnProperty.call(files, DOCS_DIR + '/node-n2.md'), 'an emptied document deletes the file (empty documents never stay on disk)')
+ok(removes.indexOf(DOCS_DIR + '/node-n2.md') !== -1, 'and it went through fsRemove')
+has(view.text(), '还没有文档', 'the status line says there is no document again')
+const removesBefore = removes.length
+view.click(btnOf('保存'))
+await tick()
+await tick()
+eq(removes.length, removesBefore, 'saving an empty document again does not try to delete anything')
+eq(writes.filter((w) => w.path === DOCS_DIR + '/node-n2.md').length, 1, 'and nothing gets created either')
+
+// 再写一份非空的：角标应当自己回来
+view.fire(view.findMaybe('sc-docarea'), 'onChange', { target: { value: '节点二的文档：回来了。\n' } })
+await tick()
+view.click(btnOf('保存'))
+await tick()
+await tick()
+ok(Object.prototype.hasOwnProperty.call(files, DOCS_DIR + '/node-n2.md'), 'a non-empty document is written back')
+view.click(view.find('sc-expandx'))
+await tick()
+ok(!!badgeOf(N2), 'the corner badge comes back once a document exists again')
+ok(!badgeOf(N1), 'and the card without one still has none')
+
+// 只有章节 / 节点有文档页：条件卡片什么都没有
+view.fire(cardOf('card/condition-c1.md'), 'onDoubleClick', {})
+await wait(60)
+eq(view.findAll('sc-tab').length, 0, 'a condition card gets no document tab')
+view.click(view.find('sc-expandx'))
+await tick()
+// 节点有页签，但文件不存在时是「还没有文档」，不是错误
+view.fire(cardOf(N1), 'onDoubleClick', {})
+await wait(60)
+view.click(tabOf('文档'))
+await tick()
+has(view.text(), '还没有文档', 'a node without a document says so instead of erroring')
+eq(view.findMaybe('sc-docarea').props.value, '', 'and the editor starts empty')
+view.click(view.find('sc-expandx'))
+await tick()
+
+// 文档子目录名也能改（和 卡片 / 归档 一样，按项目存在浏览器本地）
+view.click(view.findAll('sc-btn').filter((n) => view.textOf(n) === '设置')[0])
+await tick()
+const docsInput = view.findAll('sc-inp').filter((n) => n.props.value === '文档')[0]
+ok(!!docsInput, 'the settings dialog has a field for the document subdirectory')
+view.fire(docsInput, 'onChange', { target: { value: 'doc' } })
+await tick()
+view.click(view.findAll('sc-btn').filter((n) => view.textOf(n) === '保存')[0])
+await tick()
+await tick()
+eq(JSON.parse(h.storage()['dsh-script-cards:state'])[ROOT].dirs.docs, 'doc', 'the new document dir name was stored')
+ok(!!calls.filter((c) => c.method === 'fsList' && c.dir.indexOf('/doc') !== -1).pop(), 'the panel re-scanned using the new document directory')
+view.click(view.findAll('sc-btn').filter((n) => view.textOf(n) === '设置')[0])
+await tick()
+view.fire(view.findAll('sc-inp').filter((n) => n.props.value === 'doc')[0], 'onChange', { target: { value: '文档' } })
+await tick()
+view.click(view.findAll('sc-btn').filter((n) => view.textOf(n) === '保存')[0])
+await tick()
+await tick()
+ok(view.findAll('sc-card').length >= 5, 'back on the original document dir (still inside chapter 甲)')
+ok(!!badgeOf(N2), 'and the documents are found there again')
+// 旧记录里没有 docs 字段（甚至整个 dirs 都是老形状）→ 回落默认值，不报错、更不会拿空名字去扫盘
+const legacy = JSON.parse(h.storage()['dsh-script-cards:state'])
+legacy[ROOT] = Object.assign({}, legacy[ROOT], { dirs: { archive: '剧本档案', cards: '卡片', sub: '归档' } })
+h.storage()['dsh-script-cards:state'] = JSON.stringify(legacy)
+const listsBeforeLegacy = calls.filter((c) => c.method === 'fsList').length
+view.click(view.findAll('sc-btn').filter((n) => view.textOf(n) === '刷新')[0])
+await tick()
+await tick()
+await tick()
+const legacyLists = calls.filter((c) => c.method === 'fsList').slice(listsBeforeLegacy)
+ok(legacyLists.some((c) => c.dir === DOCS_DIR), 'a legacy record without the docs field falls back to 文档 when re-scanning', legacyLists.map((c) => c.dir))
+view.click(view.findAll('sc-btn').filter((n) => view.textOf(n) === '设置')[0])
+await tick()
+ok(!!view.findAll('sc-inp').filter((n) => n.props.value === '文档')[0], 'and the settings dialog shows the default again')
+view.click(view.findAll('sc-btn').filter((n) => view.textOf(n) === '取消')[0])
+await tick()
+
+// ── AH. 浮动窗口：拖动 / 缩放 / 钉住多开 / 位置与模式记住 ──────────────────────
+// 用户拍板：「默认改成浮动窗口 —— 拖标题栏移动、右下角手柄缩放（最小尺寸约 320×220，
+// 不能拖出画布可视区），标题栏有图钉与全屏/浮动两个切换按钮。钉住的不自动关，
+// 可以同时开多个。位置与模式记住。」
+console.log('\nAH. the floating window: drag, resize, pin, remember')
+const winStyle = (k) => {
+  const w = winOf(k)
+  return { x: Number(w.props.style.left), y: Number(w.props.style.top), w: Number(w.props.style.width), h: Number(w.props.style.height) }
+}
+const partOf = (k, cls) => kidsOf(winOf(k)).filter((n) => n.props && String(n.props.className || '') === cls)[0]
+const modeBtnOf = (k) => kidsOf(winOf(k)).filter((n) => n.props && /^(全屏|浮动)$/.test(view.textOf(n)))[0]
+const winTitles = () => view.findAll('sc-expand').map((n) => view.textOf(n))
+view.fire(cardOf(N2), 'onDoubleClick', {})
+await wait(60)
+eq(JSON.stringify(winStyle(N2)), JSON.stringify({ x: 220, y: 35, w: 460, h: 430 }), 'a fresh window lands centred at 460×430')
+const head = partOf(N2, 'sc-expandh')
+ok(!!head, 'the window has a title bar')
+view.fire(head, 'onPointerDown', { button: 0, clientX: 300, clientY: 300 })
+await tick()
+view.window('pointermove', { clientX: 340, clientY: 320 })
+await tick()
+eq(winStyle(N2).x, 260, 'dragging the title bar moves the window with the pointer')
+eq(winStyle(N2).y, 55, 'on both axes')
+view.window('pointerup', { clientX: 340, clientY: 320 })
+await tick()
+const storedWins = JSON.parse(h.storage()['dsh-script-cards:state'])[ROOT].windows
+ok(!!storedWins[N2], 'the window geometry was written to localStorage')
+eq(storedWins[N2].x, 260, 'with the x it was dragged to')
+eq(storedWins[N2].mode, 'float', 'and the mode it is in')
+// 拖完那一下 click 要被吃掉（不然松手正好落在标题栏按钮上就误触了）
+let swallowed = false
+view.fire(partOf(N2, 'sc-expandh'), 'onClick', { preventDefault() {}, stopPropagation() { swallowed = true } })
+ok(swallowed, 'the click that ends a drag is swallowed')
+view.fire(partOf(N2, 'sc-expandh'), 'onPointerDown', { button: 0, clientX: 300, clientY: 300 })
+view.window('pointermove', { clientX: 5000, clientY: 5000 })
+await tick()
+const far = winStyle(N2)
+ok(far.x + far.w <= 900 && far.y + far.h <= 500, 'you cannot drag a window out of the visible canvas', far)
+view.window('pointerup', { clientX: 5000, clientY: 5000 })
+await tick()
+const grip = partOf(N2, 'sc-expandgrip')
+ok(!!grip, 'the window has a resize grip in the bottom-right corner')
+view.fire(grip, 'onPointerDown', { button: 0, clientX: 400, clientY: 400 })
+view.window('pointermove', { clientX: 100, clientY: 100 })
+await tick()
+eq(winStyle(N2).w, 320, 'shrinking stops at the 320 minimum width')
+eq(winStyle(N2).h, 220, 'and the 220 minimum height')
+view.window('pointermove', { clientX: 5000, clientY: 5000 })
+await tick()
+const big = winStyle(N2)
+eq(big.w, 900, 'growing stops at the canvas width')
+eq(big.h, 500, 'and at the canvas height')
+view.window('pointerup', { clientX: 5000, clientY: 5000 })
+await tick()
+
+// 钉住：切卡片不关，可以同时开好几个
+const pinOf = (k) => kidsOf(winOf(k)).filter((n) => n.props && String(n.props.className || '').indexOf('sc-expandb') !== -1 && view.textOf(n) === '')[0]
+view.click(pinOf(N2))
+await tick()
+ok(String(pinOf(N2).props.className).indexOf('on') !== -1, 'the pin button lights up when pinned')
+view.fire(cardOf(N3), 'onDoubleClick', {})
+await wait(60)
+eq(view.findAll('sc-expand').length, 2, 'a pinned window stays open while another card opens')
+ok(!!winOf(N2) && !!winOf(N3), 'both windows are on screen at once')
+ok(winTitles().length === 2, 'each window keeps its own title')
+view.click(view.findAll('sc-navbtn').filter((n) => n.props.title === '回到上级')[0])
+await tick()
+eq(view.findAll('sc-expand').length, 1, 'changing level closes the unpinned window only')
+ok(!!winOf(N2), 'the pinned one is still there')
+eq(view.findMaybe('sc-scrim'), null, 'and it is still floating, not fullscreen')
+// 切到全屏 → 模式记进 localStorage；关掉再开，回到全屏
+view.click(modeBtnOf(N2))
+await tick()
+eq(JSON.parse(h.storage()['dsh-script-cards:state'])[ROOT].windows[N2].mode, 'full', 'the mode is remembered in localStorage')
+ok(!!view.findMaybe('sc-scrim'), 'fullscreen mode brings the scrim back')
+view.click(view.find('sc-expandx'))
+await tick()
+eq(view.findAll('sc-expand').length, 0, 'the window is closed')
+view.fire(cardOf(G1), 'onDoubleClick', {})
+await tick()
+view.fire(cardOf(N2), 'onDoubleClick', {})
+await wait(60)
+ok(String(winOf(N2).props.className).indexOf('sc-full') !== -1, 're-opening the same card comes back in fullscreen mode')
+ok(!!view.findMaybe('sc-scrim'), 'with its scrim')
+view.click(modeBtnOf(N2))
+await tick()
+eq(JSON.parse(h.storage()['dsh-script-cards:state'])[ROOT].windows[N2].mode, 'float', 'switching back to 浮动 is remembered too')
+eq(view.findMaybe('sc-scrim'), null, 'and the scrim goes away')
+// 浮动窗口不锁画布：它开着，画布照样能拖
+const t0 = translateOf()
+view.fire(view.find('sc-canvas'), 'onPointerDown', { button: 0, clientX: 800, clientY: 460, target: blank })
+await tick()
+view.window('pointermove', { clientX: 850, clientY: 470 })
+await tick()
+ok(translateOf().x !== t0.x, 'the canvas still pans while a floating window is open')
+view.window('pointerup', { clientX: 850, clientY: 470 })
+await tick()
+ok(translateOf().x !== t0.x, 'the canvas still pans while a floating window is open')
+view.window('pointerup', { clientX: 850, clientY: 470 })
+await tick()
+// 点窗口里面不许被画布当成「空白处按下」（否则点一下文档输入框就开始平移画布）
+const insideTarget = { closest: (sel) => (sel === '.sc-expand' ? {} : null), parentNode: null }
+const t1 = translateOf()
+view.fire(view.find('sc-canvas'), 'onPointerDown', { button: 0, clientX: 400, clientY: 300, target: insideTarget })
+await tick()
+eq(translateOf().x, t1.x, 'pressing inside a window does not start a canvas pan')
+ok(String(view.find('sc-canvas').props.className).indexOf('panning') === -1, 'and does not switch to the grabbing cursor')
+
+// ── AI. 编辑弹窗的「字段 | 文档」页签 ─────────────────────────────────────────
+console.log('\nAI. the editor modal gets a 字段 | 文档 tab pair')
+// 弹窗与它后面那个浮动窗口各有一套页签，所以取**最后一个**匹配（弹窗渲染在面板之后）
+const modalTab = (label) => view.findAll('sc-tab').filter((n) => view.textOf(n) === label).pop()
+view.click(view.findAll('sc-btn').filter((n) => view.textOf(n).indexOf('在详情里编辑') !== -1)[0])
+await tick()
+ok(!!view.findMaybe('sc-modal'), 'the editor modal is open')
+ok(!!modalTab('字段') && !!modalTab('文档'), 'the modal offers 字段 | 文档')
+eq(view.findMaybe('sc-docarea'), null, '字段 is the default tab — nothing mounts the document editor yet')
+ok(!!btnOf('保存（写回卡片文件）'), 'the footer saves the card while 字段 is active')
+ok(!btnOf('保存（写回文档）'), 'and does not offer the document save yet')
+view.click(modalTab('文档'))
+await tick()
+ok(!!view.findMaybe('sc-docarea'), 'the document editor is mounted inside the modal')
+ok(!!btnOf('保存（写回文档）'), 'the footer button switches to "save the document" — the visible button must save what you are editing')
+ok(!btnOf('保存（写回卡片文件）'), 'so it cannot write the card file by mistake')
+ok(!!btnOf('删除卡片文件'), 'deleting the card is still available from the document tab')
+const cardWritesBefore = writes.filter((w) => w.path === CARDS_DIR + '/node-n2.md').length
+view.fire(view.findMaybe('sc-docarea'), 'onChange', { target: { value: '从弹窗里写回的文档。\n' } })
+await tick()
+view.click(btnOf('保存（写回文档）'))
+await tick()
+await tick()
+ok(!!writes.filter((w) => w.path === DOCS_DIR + '/node-n2.md' && w.text.indexOf('从弹窗里写回') !== -1).pop(), 'that button wrote the document file')
+eq(writes.filter((w) => w.path === CARDS_DIR + '/node-n2.md').length, cardWritesBefore, 'and left the card file alone')
+view.click(modalTab('字段'))
+await tick()
+ok(!!btnOf('保存（写回卡片文件）'), 'switching back restores the card save button')
+view.click(btnOf('取消'))
+await tick()
+ok(!view.findMaybe('sc-modal'), 'the modal is closed')
+view.click(view.find('sc-expandx'))
+await tick()
+// 条件卡片：窗口与弹窗都没有文档页签
+view.fire(cardOf('card/condition-c1.md'), 'onDoubleClick', {})
+await wait(60)
+eq(view.findAll('sc-tab').length, 0, 'a condition card gets no document tab in its window')
+view.click(view.findAll('sc-btn').filter((n) => view.textOf(n).indexOf('在详情里编辑') !== -1)[0])
+await tick()
+eq(view.findAll('sc-tab').length, 0, 'nor in its editor modal')
+view.click(btnOf('取消'))
+await tick()
+// 还没有文件的新卡片：也没有文档页签（文件是保存时才生成的）
+view.fire(view.find('sc-canvas'), 'onContextMenu', { clientX: 500, clientY: 400 })
+await tick()
+view.click(view.findAll('sc-menuitem').filter((n) => view.textOf(n).indexOf('新建节点') !== -1)[0])
+await tick()
+ok(!!view.findMaybe('sc-modal'), 'the new-card editor opened')
+eq(view.findAll('sc-tab').length, 0, 'a card that has no file yet gets no document tab')
+view.click(btnOf('取消'))
+await tick()
+view.click(view.find('sc-expandx'))
+await tick()
+
+// ── AJ. 删卡片时的文档三选一 ─────────────────────────────────────────────────
+console.log('\nAJ. deleting a card asks about its document')
+const openDeleteMenu = (k) => {
+  view.fire(cardOf(k), 'onContextMenu', { clientX: 300, clientY: 300 })
+  return tick().then(function () {
+    view.click(view.findAll('sc-menuitem').filter((n) => view.textOf(n).indexOf('删除卡片文件') !== -1)[0])
+    return tick()
+  })
+}
+// 没有文档的卡片：保持老流程，不打扰
+await openDeleteMenu(N1)
+await tick()
+const plainDlg = view.findMaybe('sc-modal')
+ok(!!plainDlg, 'a card without a document still gets the plain confirm')
+ok(!btnOf('一起删除文档') && !btnOf('只删卡片、留着文档'), 'with no document question attached')
+view.click(btnOf('取消'))
+await tick()
+// 有文档的卡片：三选一
+await openDeleteMenu(N3)
+await tick()
+const docDlg = view.findMaybe('sc-modal')
+ok(!!docDlg, 'a card with a document gets the three-way confirm')
+has(view.textOf(docDlg), '一起删除文档', 'which offers to delete the document too')
+has(view.textOf(docDlg), '只删卡片、留着文档', 'and to keep it')
+has(view.textOf(docDlg), '文档/node-n3.md', 'and names the document file')
+view.click(btnOf('取消'))
+await tick()
+ok(Object.prototype.hasOwnProperty.call(files, CARDS_DIR + '/node-n3.md'), 'cancelling deletes nothing')
+await openDeleteMenu(N3)
+await tick()
+view.click(btnOf('只删卡片、留着文档'))
+await tick()
+await tick()
+ok(!Object.prototype.hasOwnProperty.call(files, CARDS_DIR + '/node-n3.md'), 'the card file was deleted')
+ok(Object.prototype.hasOwnProperty.call(files, DOCS_DIR + '/node-n3.md'), 'and the document was kept')
+await openDeleteMenu(N2)
+await tick()
+view.click(btnOf('一起删除文档'))
+await tick()
+await tick()
+ok(!Object.prototype.hasOwnProperty.call(files, CARDS_DIR + '/node-n2.md'), 'the card file was deleted')
+ok(!Object.prototype.hasOwnProperty.call(files, DOCS_DIR + '/node-n2.md'), 'and the document went with it')
+// 弹窗里写回的文档也要点亮卡片上的角标（onDocChange 必须把卡片一起带给面板）
+view.fire(cardOf(N1), 'onDoubleClick', {})
+await wait(60)
+view.click(view.findAll('sc-btn').filter((n) => view.textOf(n).indexOf('在详情里编辑') !== -1)[0])
+await tick()
+view.click(view.findAll('sc-tab').filter((n) => view.textOf(n) === '文档').pop())
+await tick()
+ok(!badgeOf(N1), 'node N1 has no document yet')
+view.fire(view.findMaybe('sc-docarea'), 'onChange', { target: { value: '第一次给节点一写文档。\n' } })
+await tick()
+view.click(btnOf('保存（写回文档）'))
+await tick()
+await tick()
+ok(Object.prototype.hasOwnProperty.call(files, DOCS_DIR + '/node-n1.md'), 'the editor modal wrote N1 a document')
+view.click(btnOf('取消'))
+await tick()
+ok(!!badgeOf(N1), 'and the corner badge lights up (onDocChange is wired to the card, not to a bare true)')
+view.click(view.find('sc-expandx'))
+await tick()
+
+// ── AK. 文档：保存失败要说原始原因；桥不在时只读并说明 ───────────────────────
+console.log('\nAK. the document editor reports the raw failure and goes read-only')
+view.click(view.findAll('sc-navbtn').filter((n) => n.props.title === '回到上级')[0])
+await tick()
+// 章节卡片的展开入口在右键菜单里（双击是「进入下级」）
+view.fire(cardOf(G1), 'onContextMenu', { clientX: 200, clientY: 200 })
+await tick()
+view.click(view.findAll('sc-menuitem').filter((n) => view.textOf(n).indexOf('展开') !== -1)[0])
+await wait(60)
+ok(!!winOf(G1), 'the chapter window is open')
+view.click(tabOf('文档'))
+await tick()
+eq(view.findMaybe('sc-docarea').props.value, files[DOCS_DIR + '/chapter-g1.md'], 'the chapter document loaded')
+// (a) 保存失败：红条与状态行里必须是**原始**失败原因，而不是一句「保存失败」
+const realWriteFn = bridge.fsWrite
+bridge.fsWrite = async () => ({ ok: false, error: { code: 'error.unavailable', message: '磁盘满了（假装的）' } })
+view.fire(view.findMaybe('sc-docarea'), 'onChange', { target: { value: '写不进去的内容。\n' } })
+await tick()
+view.click(btnOf('保存'))
+await tick()
+await tick()
+has(view.text(), '磁盘满了（假装的）', 'the raw failure reason is shown in the notice bar')
+has(view.textOf(view.find('sc-docstate')), '磁盘满了（假装的）', 'and on the editor status line too')
+has(view.text(), '● 未保存', 'the buffer stays dirty — nothing pretends it was saved')
+bridge.fsWrite = realWriteFn
+view.click(btnOf('保存'))
+await tick()
+await tick()
+eq(files[DOCS_DIR + '/chapter-g1.md'], '写不进去的内容。\n', 'saving works again once the bridge is back')
+// (b) 桥不在（只读）：输入框只读、按钮禁用，并把原因写出来
+const backWriteFn = bridge.fsWrite
+bridge.fsWrite = undefined
+view.click(tabOf('卡片'))
+await tick()
+view.click(tabOf('文档'))
+await tick()
+const roArea = view.findMaybe('sc-docarea')
+ok(!!roArea && roArea.props.readOnly === true, 'in read-only mode the document textarea is read-only')
+has(view.text(), '只读模式', 'and the window explains why it cannot write')
+eq(btnOf('保存').props.disabled, true, 'the save button is disabled')
+bridge.fsWrite = backWriteFn
+view.click(view.find('sc-expandx'))
+await tick()
+
+// ── AL. 新界面的样式契约 ─────────────────────────────────────────────────────
+// 替身不跑 CSS，所以「拖动的地方不许能选中文字」「文档输入框必须等宽」这类只能靠契约钉住
+// （真浏览器里的实测在 tests/visual.mjs）。
+console.log('\nAL. CSS contracts for the new UI')
+ok(/\.sc-expandh\{[^}]*user-select:none/.test(cssText), 'the title bar (the drag handle) cannot select text while you drag')
+ok(/\.sc-expandh\{[^}]*cursor:move/.test(cssText), 'the title bar shows that it is draggable')
+ok(/\.sc-expandgrip\{[^}]*cursor:nwse-resize/.test(cssText), 'the corner grip is a real resize handle')
+ok(/\.sc-expandgrip\{[^}]*user-select:none/.test(cssText), 'and resizing does not select text either')
+// 文档输入区是**两层**：底下的彩色高亮层 + 上面文字透明的 textarea。
+// 「两层排字必须逐项一致」这条只能在契约层钉：字体 / 行高 / 内边距 / 折行规则写在
+// 同一条选择器里（.sc-dochl,.sc-docarea），改一条就等于两条一起改。
+const bothLayers = (cssText.match(/\.sc-dochl,\.sc-docarea\{[^}]*\}/) || [''])[0]
+ok(!!bothLayers, 'the highlight layer and the textarea share one typography rule')
+ok(/font-family:ui-monospace/.test(bothLayers), 'both layers are monospaced')
+ok(/line-height:/.test(bothLayers) && /padding:/.test(bothLayers), 'both layers share the line height and padding')
+ok(/white-space:pre-wrap/.test(bothLayers) && /word-break:break-word/.test(bothLayers), 'both layers wrap identically')
+ok(/^\.sc-dochl,\.sc-docarea/.test(bothLayers.trim()), 'and neither layer overrides the other from a later rule (position/padding only via that pair)')
+ok(/\.sc-docarea\{[^}]*color:transparent/.test(cssText), 'the textarea text itself is transparent')
+ok(/\.sc-docarea\{[^}]*caret-color:/.test(cssText), 'and the caret has its own colour (otherwise you cannot see where you type)')
+ok(/\.sc-dochl\{[^}]*overflow:hidden/.test(cssText), 'the highlight layer never scrolls on its own')
+ok(/\.sc-docarea\{[^}]*overflow-y:scroll/.test(cssText), 'the textarea always reserves its scrollbar (that is what JS compensates for)')
+ok(/\.sc-docarea::selection\{[^}]*background:/.test(cssText), 'the selection has a background (transparent text would otherwise vanish when selected)')
+ok(/\.sc-docquiet\{/.test(cssText), 'narration leading spaces get their own dim style')
+ok(!/\.sc-docarea\{[^}]*user-select:none/.test(cssText), 'the document textarea stays selectable (it is an input)')
+ok(/\.sc-docdot\{[^}]*position:absolute/.test(cssText), 'the "has a document" badge is a corner badge')
+ok(/\.sc-tab\.on\{[^}]*border-bottom-color/.test(cssText), 'the active tab is visually the active one')
+ok(/\.sc-expandbody\.sc-docbody\{[^}]*overflow:hidden/.test(cssText), 'the document tab hands the scrolling to the textarea itself')
+ok(/\.sc-expand\.sc-full/.test(cssText), 'fullscreen mode still has its own rule (the old behaviour is kept)')
+ok(/\.sc-docrole\{/.test(cssText), 'the role chip (正在写：…) has its own rule')
+ok(/\.sc-menuinput\{/.test(cssText), 'and so does the speaker filter box in the menu')
+
+// ── AM. 文档里的台词 / 旁白结构 ───────────────────────────────────────────────
+// 用户拍板：「文档可以加一个结构，右键出菜单，然后可以选取已经之前方片界面定义的角色，
+// 后面的话就自动变成这个角色说的话，Enter 换行结束这个角色的话（其中要加旁白，
+// 但是左侧不显示人名）」。
+//   台词 「角色名」：台词   ·   旁白 行首两个全角空格、不写人名
+//   选人后进入「该角色说话」：Enter 结束这个角色，Shift+Enter 换行但仍是同一个角色。
+console.log('\nAM. dialogue and narration in the document')
+// 现加两张人物卡（名字取括号之前那一段）和一张台词素材卡（不该出现在菜单里）——
+// 这样前面 A 段的卡片计数不受影响。
+files[CARDS_DIR + '/character-wasurenagusa.md'] = md({ id: 'character-wn', type: 'character', title: '勿忘我（ワスレナグサ）', summary: '人物简介', tags: '人物' })
+files[CARDS_DIR + '/character-genku.md'] = md({ id: 'character-gk', type: 'character', title: '幻驹山茶（ゲンク サザンカ）', summary: '人物简介', tags: '人物' })
+files[CARDS_DIR + '/dialogue-d2.md'] = md({ id: 'dialogue-d2', type: 'dialogue', title: '台词素材乙', summary: '台词库', tags: '台词' })
+view.click(view.findAll('sc-btn').filter((n) => view.textOf(n) === '刷新')[0])
+await tick()
+await tick()
+await tick()
+view.fire(cardOf(G1), 'onDoubleClick', {})
+await tick()
+view.fire(cardOf(N1), 'onDoubleClick', {})
+await wait(60)
+view.click(tabOf('文档'))
+await tick()
+const carea = () => view.findMaybe('sc-docarea')
+const caretBox = () => view.caretBox(view.find('sc-docarea'))
+const setCaretToEnd = () => {
+  const n = String(carea().props.value).length
+  caretBox().start = n
+  caretBox().end = n
+}
+const base = files[DOCS_DIR + '/node-n1.md']
+eq(carea().props.value, base, 'the document written earlier is still there')
+setCaretToEnd()
+// 菜单：全部人物 + 旁白 + 结束当前角色
+view.fire(carea(), 'onContextMenu', { clientX: 300, clientY: 300 })
+await tick()
+ok(!!view.findMaybe('sc-menu'), 'right-clicking the document opens a menu')
+const docMenuText = () => view.textOf(view.find('sc-menu'))
+const menuItem = (label) => view.findAll('sc-menuitem').filter((n) => view.textOf(n).indexOf(label) !== -1)[0]
+has(docMenuText(), '勿忘我', 'the character list uses the name before the bracket')
+ok(docMenuText().indexOf('（ワスレナグサ）') === -1, 'and does not print the bracketed reading', docMenuText())
+has(docMenuText(), '幻驹山茶', 'another character card is in the list')
+has(docMenuText(), '人物甲', 'a title without brackets is used as-is')
+has(docMenuText(), '旁白', 'the menu offers narration')
+has(docMenuText(), '结束当前角色', 'and a way to end the current role')
+ok(docMenuText().indexOf('台词素材乙') === -1, 'dialogue-material cards are not speakers')
+ok(!!view.findMaybe('sc-menuinput'), 'there is a filter box (the cast can grow)')
+// 筛选
+view.fire(view.find('sc-menuinput'), 'onChange', { target: { value: '勿忘' } })
+await tick()
+has(docMenuText(), '勿忘我', 'filtering keeps the matching character')
+ok(docMenuText().indexOf('幻驹山茶') === -1, 'and drops the others', docMenuText())
+// 中间态：往菜单上按一下鼠标，菜单必须还在。老坑是「捕获阶段的 mousedown 就关菜单」——
+// 那样菜单在菜单项的 click 之前被卸载，点任何一项都没反应（真实顺序：mousedown → mouseup → click）。
+view.window('mousedown', { target: null })
+await tick()
+ok(!!view.findMaybe('sc-menu'), 'a mousedown does not tear the menu down before the click lands')
+view.fire(view.find('sc-menuinput'), 'onChange', { target: { value: '' } })
+await tick()
+view.click(menuItem('勿忘我'))
+await tick()
+const afterPick = base + '「勿忘我」：'
+// 续行＝(前缀宽度 − 1) 个全角空格 + 一个全角冒号：`「勿忘我」：` 宽 6 → 5 空格 + 冒号，
+// 冒号正落在首行冒号那一列（用户拍板的「冒号加回对齐位」）
+const padCont = '　'.repeat(5) + '：'
+eq(carea().props.value, afterPick, 'picking a character inserts the 「name」： prefix at the caret')
+has(view.text(), '正在写：勿忘我', 'the status bar shows who is speaking')
+eq(caretBox().start, afterPick.length, 'and the caret lands right after the prefix')
+eq(view.findMaybe('sc-menu'), null, 'the menu closed on pick')
+// 打字：stopPropagation 不能丢（画布快捷键 Delete / 空格 / Ctrl+V 不许被抢）
+view.fire(carea(), 'onChange', { target: { value: afterPick + '你终于来了。' } })
+await tick()
+setCaretToEnd()
+let stopped = false
+view.fire(carea(), 'onKeyDown', { key: 'Enter', shiftKey: true, preventDefault() {}, stopPropagation() { stopped = true } })
+await tick()
+const afterShift = afterPick + '你终于来了。\n' + padCont
+eq(carea().props.value, afterShift, 'Shift+Enter breaks the line and pads it out to the dialogue column (no repeated name)')
+ok(stopped, 'typing stops propagation so the canvas shortcuts do not steal the key')
+has(view.text(), '正在写：勿忘我', 'and the role is still active')
+// 直接 Enter ＝ 这一句说完了
+setCaretToEnd()
+view.fire(carea(), 'onKeyDown', { key: 'Enter', preventDefault() {}, stopPropagation() {} })
+await tick()
+eq(carea().props.value, afterShift + '\n', 'a plain Enter ends the role: it only breaks the line (no indent)')
+ok(view.text().indexOf('正在写：') === -1, 'and the status bar drops the role')
+// 旁白：两个全角空格、没有人名
+view.fire(carea(), 'onContextMenu', { clientX: 320, clientY: 320 })
+await tick()
+view.click(menuItem('旁白'))
+await tick()
+eq(carea().props.value, afterShift + '\n　　', 'narration starts with exactly two full-width spaces and no name')
+has(view.text(), '正在写：旁白', 'the status bar says it is narration')
+view.fire(carea(), 'onChange', { target: { value: afterShift + '\n　　雨停了。' } })
+await tick()
+setCaretToEnd()
+view.fire(carea(), 'onKeyDown', { key: 'Enter', shiftKey: true, preventDefault() {}, stopPropagation() {} })
+await tick()
+eq(carea().props.value, afterShift + '\n　　雨停了。\n　　', 'narration continuations keep the same two full-width spaces')
+setCaretToEnd()
+view.fire(carea(), 'onKeyDown', { key: 'Enter', preventDefault() {}, stopPropagation() {} })
+await tick()
+eq(carea().props.value, afterShift + '\n　　雨停了。\n　　\n', 'Enter ends the narration too')
+ok(view.text().indexOf('正在写：') === -1, 'no role chip any more')
+// 前缀不许塞进句子中间：光标在行中间时先补一个换行
+const beforeMid = carea().props.value
+const tailStart = beforeMid.length
+view.fire(carea(), 'onChange', { target: { value: beforeMid + '前半句后半句' } })
+await tick()
+caretBox().start = tailStart + 3
+caretBox().end = tailStart + 3
+view.fire(carea(), 'onContextMenu', { clientX: 300, clientY: 300 })
+await tick()
+view.click(menuItem('人物甲'))
+await tick()
+const afterMid = beforeMid + '前半句\n「人物甲」：后半句'
+eq(carea().props.value, afterMid, 'a prefix picked mid-line gets its own line first')
+// 当前角色在菜单里打勾；「结束当前角色」只结束状态、不写任何东西
+view.fire(carea(), 'onContextMenu', { clientX: 300, clientY: 300 })
+await tick()
+has(docMenuText(), '✓ 人物甲', 'the menu ticks the character currently being written')
+view.click(menuItem('结束当前角色'))
+await tick()
+ok(view.text().indexOf('正在写：') === -1, '结束当前角色 clears the state')
+eq(carea().props.value, afterMid, 'and writes nothing')
+// 没有角色时那颗菜单项是灰的；普通行不带任何前缀
+view.fire(carea(), 'onContextMenu', { clientX: 300, clientY: 300 })
+await tick()
+eq(view.findAll('sc-menuitem').filter((n) => view.textOf(n) === '结束当前角色')[0].props.disabled, true, 'with no role active, 结束当前角色 is disabled')
+view.fire(view.find('sc-menuback'), 'onMouseDown', {})
+await tick()
+eq(view.findMaybe('sc-menu'), null, 'pressing the backdrop dismisses the document menu')
+setCaretToEnd()
+view.fire(carea(), 'onKeyDown', { key: 'Enter', preventDefault() {}, stopPropagation() {} })
+await tick()
+eq(carea().props.value, afterMid + '\n', 'a plain line breaks without any prefix')
+// 台词与旁白是**字面**写进 .md 的
+view.click(btnOf('保存'))
+await tick()
+await tick()
+const savedDoc = files[DOCS_DIR + '/node-n1.md']
+has(savedDoc, '「勿忘我」：你终于来了。', 'the dialogue line is stored literally in the .md')
+has(savedDoc, '「人物甲」：后半句', 'and so is the second character')
+has(savedDoc, '你终于来了。\n' + padCont, 'and the continuation indent (spaces + colon) is literal text in the .md too')
+has(savedDoc, '\n　　雨停了。', 'narration keeps its two full-width spaces')
+// 编辑弹窗那条线共用同一个 DocEditor，也要能弹出人物菜单
+view.click(tabOf('卡片'))
+await tick()
+view.click(view.findAll('sc-btn').filter((n) => view.textOf(n).indexOf('在详情里编辑') !== -1)[0])
+await tick()
+view.click(view.findAll('sc-tab').filter((n) => view.textOf(n) === '文档').pop())
+await tick()
+view.fire(view.findAll('sc-docarea').pop(), 'onContextMenu', { clientX: 300, clientY: 300 })
+await tick()
+has(view.textOf(view.findMaybe('sc-menu')), '人物甲', 'the editor-modal entry point gets the speaker menu too')
+view.fire(view.find('sc-menuback'), 'onMouseDown', {})
+await tick()
+view.click(btnOf('取消'))
+await tick()
+view.click(view.find('sc-expandx'))
+await tick()
+
+// ── AN. 方片页给人物卡设「角色色」（tile 右键菜单） ───────────────────────────
+// 用户要的：方片页的**人物卡**右键 → 挑颜色（写进卡片文件的 color，跟项目进 git）、
+// 「清除」＝回到 tags 里的「印象色#rrggbb」；其它类型的卡不给入口（他明确讨厌多余入口）。
+console.log('\nAN. the grid sets a character colour from the tile context menu')
+// 现加一张带「印象色」tag 的人物卡：清掉角色色之后应当回到 tag 里那个颜色
+files[CARDS_DIR + '/character-mikan.md'] = md({ id: 'character-mk', type: 'character', title: '蜜柑（ミカン）', summary: '人物简介', tags: '人物, 印象色#3FA46A' })
+view.click(view.findAll('sc-btn').filter((n) => view.textOf(n) === '刷新')[0])
+await tick()
+await tick()
+await tick()
+view.click(view.findAll('sc-segb').filter((n) => view.textOf(n) === '方片')[0])
+await tick()
+const tileOf = (title) => view.findAll('sc-tile').filter((n) => view.textOf(n).indexOf(title) !== -1)[0]
+const accentOf = (title) => { const t = tileOf(title); return t && t.props.style ? String(t.props.style['--sc-accent'] || '') : '' }
+const dyeOf = (title) => String((tileOf(title) || {}).props && tileOf(title).props.className || '').indexOf(' dye') !== -1
+const beatTile = tileOf('节拍甲')
+ok(!!tileOf('蜜柑') && !!beatTile, 'both a character tile and a non-character tile are on the grid')
+// 颜色来源：没有 frontmatter color 时读 tags 里的「印象色#」
+ok(dyeOf('蜜柑'), 'a character card with 印象色 in its tags is tinted without any extra file field')
+eq(accentOf('蜜柑'), '#3FA46A', 'and it uses exactly the colour from that tag')
+ok(!dyeOf('节拍甲'), 'a non-character card is not tinted')
+// 入口克制：非人物卡右键不弹菜单
+view.fire(beatTile, 'onContextMenu', { clientX: 300, clientY: 300 })
+await tick()
+eq(view.findMaybe('sc-menu'), null, 'right-clicking a non-character tile opens no menu at all')
+// 人物卡右键 → 色卡菜单
+view.fire(tileOf('蜜柑'), 'onContextMenu', { clientX: 320, clientY: 260 })
+await tick()
+ok(!!view.findMaybe('sc-menu'), 'right-clicking a character tile opens the colour menu')
+has(view.textOf(view.find('sc-menu')), '角色色', 'the menu says what it is')
+ok(view.findAll('sc-swatch').length >= 8, 'it reuses the canvas swatch palette')
+ok(!!view.findAll('sc-btn').filter((n) => view.textOf(n) === '清除')[0], 'and offers 清除 (back to the 印象色 tag)')
+// 中间态：mousedown 不许把菜单拆掉（当年那个捕获阶段关菜单的坑）
+view.window('mousedown', { target: null })
+await tick()
+ok(!!view.findMaybe('sc-menu'), 'a mousedown does not tear the tile menu down before the click lands')
+// 挑一个色 → 写进卡片文件
+const swatch = view.findAll('sc-swatch')[0]
+const picked = String(swatch.props.style.background)
+view.click(swatch)
+await tick()
+await tick()
+has(files[CARDS_DIR + '/character-mikan.md'], 'color: ' + picked, 'picking a swatch writes color into the card frontmatter')
+eq(accentOf('蜜柑'), picked, 'the tile immediately shows the new colour')
+has(view.text(), '角色色 ' + picked, 'and the panel says so')
+eq(view.findMaybe('sc-menu'), null, 'the menu closes after picking')
+// 清除 → 回到 tags 里的印象色
+view.fire(tileOf('蜜柑'), 'onContextMenu', { clientX: 320, clientY: 260 })
+await tick()
+view.click(view.findAll('sc-btn').filter((n) => view.textOf(n) === '清除')[0])
+await tick()
+await tick()
+ok(String(files[CARDS_DIR + '/character-mikan.md']).indexOf('color: ') === -1, 'clearing drops the color line from the frontmatter')
+eq(accentOf('蜜柑'), '#3FA46A', 'and the tile falls back to the 印象色 tag')
+// 同一份数据源：给人物甲设色之后，**文档里那个名字的颜色立刻跟着变**
+view.fire(tileOf('人物甲'), 'onContextMenu', { clientX: 320, clientY: 260 })
+await tick()
+const sw2 = view.findAll('sc-swatch')[1] || view.findAll('sc-swatch')[0]
+const picked2 = String(sw2.props.style.background)
+view.click(sw2)
+await tick()
+await tick()
+has(files[CARDS_DIR + '/character-x.md'], 'color: ' + picked2, 'the same path works for the other character card')
+view.click(view.findAll('sc-segb').filter((n) => view.textOf(n) === '分支')[0])
+await tick()
+view.fire(cardOf(G1), 'onDoubleClick', {})
+await tick()
+view.fire(cardOf(N1), 'onDoubleClick', {})
+await wait(60)
+view.click(tabOf('文档'))
+await tick()
+const nameSpan = view.findAll('sc-docname').filter((n) => view.textOf(n).indexOf('人物甲') !== -1)[0]
+ok(!!nameSpan, 'the document highlight layer renders the character name')
+eq(nameSpan && nameSpan.props.style ? nameSpan.props.style.color : '', picked2, 'and it picks up the colour set on the grid page right away (one source of truth)')
+view.click(view.find('sc-expandx'))
+await tick()
+// 清掉人物甲的色：没有印象色 tag 的人物就完全没有颜色了（标题回到正文色）
+view.click(view.findAll('sc-segb').filter((n) => view.textOf(n) === '方片')[0])
+await tick()
+view.fire(tileOf('人物甲'), 'onContextMenu', { clientX: 320, clientY: 260 })
+await tick()
+view.click(view.findAll('sc-btn').filter((n) => view.textOf(n) === '清除')[0])
+await tick()
+await tick()
+ok(!dyeOf('人物甲'), 'with no colour left at all (no 印象色 tag either) the tile is no longer tinted')
+view.fire(beatTile, 'onContextMenu', { clientX: 300, clientY: 300 })
+await tick()
+eq(view.findMaybe('sc-menu'), null, 'a non-character tile still gets no menu')
+
+// ── AO. 文档草稿缓存（写一半切卡片不许丢） ───────────────────────────────────
+// 用户原话：「加个缓存，防止文档写一半，想要切卡片的时候，直接没掉」。
+// 草稿只存浏览器本地（dsh-script-cards:drafts → { [cardKey]: { text, at } }），
+// 不进档案目录、不产生文件；存成功后清掉、重载/放弃草稿也清掉；只读模式不写；有上限。
+console.log('\nAO. document drafts survive switching cards')
+const DRAFT_LS = 'dsh-script-cards:drafts'
+const draftsIn = () => {
+  try { return JSON.parse(h.storage()[DRAFT_LS] || '{}') } catch (e) { return {} }
+}
+const N1DOC = 'card/node-n1.md'
+view.click(view.findAll('sc-segb').filter((n) => view.textOf(n) === '分支')[0])
+await tick()
+view.fire(cardOf(G1), 'onDoubleClick', {})
+await tick()
+view.fire(cardOf(N1), 'onDoubleClick', {})
+await wait(60)
+view.click(tabOf('文档'))
+await tick()
+const diskText0 = files[DOCS_DIR + '/node-n1.md']
+eq(carea().props.value, diskText0, 'the document starts from what is on disk')
+eq(draftsIn()[N1DOC], undefined, 'and there is no draft for it yet')
+// 打字 → 草稿（节流 400ms）
+const typed1 = diskText0 + '草稿里的一行。\n'
+view.fire(carea(), 'onChange', { target: { value: typed1 } })
+await tick()
+await wait(520)
+const d1 = draftsIn()[N1DOC]
+ok(!!d1, 'typing leaves a draft in localStorage')
+eq(d1 && d1.text, typed1, 'with what was typed')
+ok(d1 && typeof d1.at === 'number' && d1.at > 0, 'and a timestamp')
+eq(d1 ? Object.keys(d1).sort().join(',') : '', 'at,text', 'the draft entry is just text + at')
+eq(files[DOCS_DIR + '/node-n1.md'], diskText0, 'and nothing was written to disk (drafts are not files)')
+// 切卡片（关窗口再开）→ 草稿回到输入框，并且说清楚这是草稿
+view.click(view.find('sc-expandx'))
+await tick()
+view.fire(cardOf(N1), 'onDoubleClick', {})
+await wait(60)
+view.click(tabOf('文档'))
+await tick()
+eq(carea().props.value, typed1, 're-opening the card restores the draft instead of the stale disk text')
+has(view.text(), '草稿 ', 'the status line says it is a draft')
+has(view.text(), '未保存', 'and that it is not saved')
+ok(!!btnOf('放弃草稿'), 'and there is a way to throw the draft away')
+eq(files[DOCS_DIR + '/node-n1.md'], diskText0, 'the disk copy is still untouched')
+// 放弃草稿 → 回盘上内容、草稿清掉
+view.click(btnOf('放弃草稿'))
+await tick()
+await tick()
+eq(carea().props.value, diskText0, '放弃草稿 puts the disk text back')
+eq(draftsIn()[N1DOC], undefined, 'and drops the draft')
+ok(!btnOf('放弃草稿'), 'the button disappears with the draft')
+has(view.text(), '已有文档（未改动）', 'and the status line goes back to the disk state')
+// 保存成功 → 草稿清掉
+const typed2 = diskText0 + '这一行存了。\n'
+view.fire(carea(), 'onChange', { target: { value: typed2 } })
+await tick()
+await wait(520)
+ok(!!draftsIn()[N1DOC], 'a draft is recorded again while typing')
+view.click(btnOf('保存'))
+await tick()
+await tick()
+has(files[DOCS_DIR + '/node-n1.md'], '这一行存了。', 'saving writes the document')
+eq(draftsIn()[N1DOC], undefined, 'and clears the draft (otherwise the next open would restore stale text)')
+// 重载 → 草稿清掉
+view.fire(carea(), 'onChange', { target: { value: typed2 + '重载会丢掉这一行。\n' } })
+await tick()
+await wait(520)
+ok(!!draftsIn()[N1DOC], 'typing again leaves a draft')
+view.click(btnOf('重载'))
+await tick()
+await tick()
+eq(carea().props.value, files[DOCS_DIR + '/node-n1.md'], '重载 reads the disk copy back')
+eq(draftsIn()[N1DOC], undefined, 'and clears the draft too')
+// 只读模式（桥不在）不写草稿：别把只读时的浏览内容存进去
+const writeFnKept = bridge.fsWrite
+bridge.fsWrite = undefined
+view.click(tabOf('卡片'))
+await tick()
+view.click(tabOf('文档'))
+await tick()
+eq(view.findMaybe('sc-docarea').props.readOnly, true, 'the editor is read-only without the bridge')
+view.fire(view.findMaybe('sc-docarea'), 'onChange', { target: { value: '只读里敲的，不该被存下来' } })
+await tick()
+await wait(520)
+eq(draftsIn()[N1DOC], undefined, 'read-only mode never writes a draft')
+bridge.fsWrite = writeFnKept
+view.click(tabOf('卡片'))
+await tick()
+view.click(tabOf('文档'))
+await tick()
+// 上限：最多 50 条，超出丢最旧的
+const seeded = {}
+for (let i = 0; i < 55; i++) seeded['card/draft-' + i + '.md'] = { text: 'd' + i, at: 1000 + i }
+h.storage()[DRAFT_LS] = JSON.stringify(seeded)
+const fileCount0 = Object.keys(files).length
+view.fire(view.findMaybe('sc-docarea'), 'onChange', { target: { value: '触发一次草稿写入。' } })
+await tick()
+await wait(520)
+const capped = draftsIn()
+eq(Object.keys(capped).length, 50, 'the draft store is capped at 50 entries')
+ok(!!capped[N1DOC], 'the newest draft (ours) is kept')
+ok(!!capped['card/draft-54.md'], 'the newest seeded draft is kept')
+ok(!capped['card/draft-5.md'] && !capped['card/draft-0.md'], 'the oldest ones were evicted')
+eq(Object.keys(files).length, fileCount0, 'and none of this created any file in the archive')
+view.click(view.find('sc-expandx'))
+await tick()
+// ── AO2. 草稿的两个洞：卸载时不许丢、定时器不许认错卡 ────────────────────────
+// 洞一：打完最后一个字、400ms 内关窗（或切卡片）—— 卸载时必须**立刻 flush**，
+//       不能把挂着的那条留给定时器（用户点名要防的就是这一段）。
+console.log('\nAO2. drafts flush on unmount and never mark the wrong card')
+delete h.storage()[DRAFT_LS]
+view.fire(cardOf(N1), 'onDoubleClick', {})
+await wait(60)
+view.click(tabOf('文档'))
+await tick()
+const diskN1 = files[DOCS_DIR + '/node-n1.md']
+view.fire(carea(), 'onChange', { target: { value: diskN1 + '最后一行，来不及等定时器。\n' } })
+await tick()
+view.click(view.find('sc-expandx'))
+await tick()
+ok(!!draftsIn()[N1DOC], 'closing the window right after typing still writes the draft (unmount flushes it)')
+eq(draftsIn()[N1DOC] && draftsIn()[N1DOC].text, diskN1 + '最后一行，来不及等定时器。\n', 'with the last keystrokes included')
+view.fire(cardOf(N1), 'onDoubleClick', {})
+await wait(60)
+view.click(tabOf('文档'))
+await tick()
+has(carea().props.value, '来不及等定时器', 'and re-opening the card gets that text back')
+// 洞二：同一个编辑器换成另一张卡（编辑弹窗从这张换到那张）时，挂着的定时器不许把
+//       **新卡**的状态行写成「草稿 …未保存」；写入仍要落到旧卡自己的 key 上。
+const draftsBefore2 = draftsIn()
+ok(!!draftsBefore2[N1DOC], 'N1 has a draft before the switch')
+// 走真实路径：章节卡片的「下属节点」列表点一下 → 面板把编辑弹窗换到那张卡
+// （同一个 CardEditor 实例，DocEditor 只是换了 props）。得先回到上级才有章节卡片。
+view.click(view.findAll('sc-navbtn').filter((n) => n.props.title === '回到上级')[0])
+await tick()
+view.fire(cardOf(G1), 'onContextMenu', { clientX: 200, clientY: 200 })
+await tick()
+view.click(view.findAll('sc-menuitem').filter((n) => view.textOf(n).indexOf('展开') !== -1)[0])
+await wait(60)
+view.click(tabOf('卡片'))
+await tick()
+const nodeRows = () => view.findAll('sc-nodelistrow')
+ok(nodeRows().length >= 2, 'the chapter window lists its nodes')
+// 第一行是「节点一」（order 10，最小的那个）；换卡要换到**另一张有文档页的卡**（node 类型）
+const firstRow = nodeRows().filter((n) => view.textOf(n).indexOf('节点一') !== -1)[0] || nodeRows()[0]
+view.click(firstRow)
+await tick()
+ok(!!view.findMaybe('sc-modal'), 'clicking a node row opens the editor modal for it')
+view.click(view.findAll('sc-tab').filter((n) => view.textOf(n) === '文档').pop())
+await tick()
+ok(!!view.findMaybe('sc-docarea'), 'and the modal shows its document')
+view.fire(view.findAll('sc-docarea').pop(), 'onChange', { target: { value: '这张卡的草稿，马上换卡。' } })
+await tick()
+// 立刻换成另一张卡（同一个 CardEditor 实例，DocEditor 只是换了 props）
+const otherRow = nodeRows().filter((n) => view.textOf(n).indexOf('节点') !== -1 && view.textOf(n).indexOf('节点一') === -1)[0]
+ok(!!otherRow, 'there is another node row to switch to')
+view.click(otherRow)
+await tick()
+await wait(520)
+eq(String((draftsIn()[N1DOC] || {}).text), '这张卡的草稿，马上换卡。', 'the pending draft is flushed to the card it belongs to')
+eq(view.textOf(view.find('sc-docstate')).indexOf('草稿'), -1, 'switching cards never marks the new card as a draft')
+eq(String(view.findMaybe('sc-docarea').props.value).indexOf('这张卡的草稿'), -1, 'and the new card shows its own content, not the old buffer')
+view.click(btnOf('取消'))
+await tick()
+view.click(view.find('sc-expandx'))
+await tick()
+
+// ── AP. 台词续行带冒号（对齐位）＋ 高亮层认人 ────────────────────────────────
+// 用户拍板：续行＝(前缀宽度 − 1) 个全角空格 + 一个全角冒号，冒号落在首行冒号那一列；
+// 高亮层里那个冒号用**当前角色**的颜色；普通行/旁白行/空行一来就清掉当前角色。
+console.log('\nAP. continuation lines carry an aligned colon in the role colour')
+delete h.storage()[DRAFT_LS]
+view.click(view.findAll('sc-segb').filter((n) => view.textOf(n) === '分支')[0])
+await tick()
+view.click(view.findAll('sc-navbtn').filter((n) => n.props.title === '回到上级')[0])
+await tick()
+view.fire(cardOf(G1), 'onDoubleClick', {})
+await tick()
+view.fire(cardOf(N1), 'onDoubleClick', {})
+await wait(60)
+view.click(tabOf('文档'))
+await tick()
+setCaretToEnd()
+view.fire(carea(), 'onContextMenu', { clientX: 300, clientY: 300 })
+await tick()
+// 蜜柑的 tags 里有「印象色#3FA46A」，所以她的名字与续行冒号都该是这个色
+view.click(menuItem('蜜柑'))
+await tick()
+const apLine1 = String(carea().props.value)
+has(apLine1, '「蜜柑」：', 'picking a character writes the full-width colon prefix')
+setCaretToEnd()
+const colonSpans = () => view.findAll('sc-docname').filter((n) => view.textOf(n) === '：')
+const colonsBefore = colonSpans().length
+view.fire(carea(), 'onKeyDown', { key: 'Enter', shiftKey: true, preventDefault() {}, stopPropagation() {} })
+await tick()
+// `「蜜柑」：`＝「1 + 蜜柑 2 + 」1 + ：1 ＝ 宽 5 → 续行＝ 4 个全角空格 + 冒号
+const contMarker = '　'.repeat(4) + '：'
+ok(String(carea().props.value).slice(-contMarker.length) === contMarker, 'Shift+Enter pads (width − 1) full-width spaces and lands the colon on the first line\'s column', JSON.stringify(String(carea().props.value).slice(-8)))
+eq(colonSpans().length, colonsBefore + 1, 'the highlight layer renders one more continuation colon')
+const newColon = colonSpans()[colonSpans().length - 1]
+eq(newColon && newColon.props.style ? (newColon.props.style.color || '') : '', '#3FA46A', 'and colours it with the current role\'s colour')
+// 旁白：两个全角空格、**不带冒号**
+view.fire(carea(), 'onChange', { target: { value: String(carea().props.value) + '　　雨停了。' } })
+await tick()
+setCaretToEnd()
+view.fire(carea(), 'onContextMenu', { clientX: 300, clientY: 300 })
+await tick()
+view.click(menuItem('旁白'))
+await tick()
+ok(String(carea().props.value).slice(-2) === '　　', 'narration still starts with two full-width spaces and no colon')
+setCaretToEnd()
+view.fire(carea(), 'onKeyDown', { key: 'Enter', shiftKey: true, preventDefault() {}, stopPropagation() {} })
+await tick()
+ok(String(carea().props.value).slice(-2) === '　　', 'and its continuation keeps the two spaces (no colon)')
+// 当前角色只在台词首行之后有效：普通行一来就清掉，后面那行的 `　　：` 不许被当成续行误染
+setCaretToEnd()
+view.fire(carea(), 'onKeyDown', { key: 'Enter', preventDefault() {}, stopPropagation() {} })
+await tick()
+setCaretToEnd()
+const colonsBeforeStray = colonSpans().length
+view.fire(carea(), 'onChange', { target: { value: String(carea().props.value) + '　　：这句不是蜜柑说的' } })
+await tick()
+eq(colonSpans().length, colonsBeforeStray, 'a colon after a plain line is not treated as a role continuation (no stale colour)')
+ok(!view.findAll('sc-docname').some((n) => view.textOf(n).indexOf('这句不是蜜柑说的') !== -1), 'that line is rendered as plain text, not as a role line')
+
+// ── AQ. 台词菜单按主角 / 配角 / 其他分组（方片页不动） ───────────────────────
+console.log('\nAQ. the speaker menu groups the cast (the grid page is untouched)')
+files[CARDS_DIR + '/character-iwasaki.md'] = md({ id: 'character-iw', type: 'character', title: '岩崎贤也', summary: '人物简介', tags: '人物, 主角' })
+files[CARDS_DIR + '/character-rose.md'] = md({ id: 'character-rs', type: 'character', title: '绮丽蔷薇（キレイバラ）', summary: '人物简介', tags: '人物 攻略对象' })
+files[CARDS_DIR + '/character-takamiya.md'] = md({ id: 'character-tk', type: 'character', title: '高宫诚', summary: '人物简介', tags: '人物, 配角' })
+view.click(view.findAll('sc-btn').filter((n) => view.textOf(n) === '刷新')[0])
+await tick()
+await tick()
+await tick()
+// 刷新之后这个文档窗口还在（刷新换的是 cards/speakers，不动浮窗），直接接着开菜单
+ok(!!view.findMaybe('sc-docarea'), 'the document window survived the refresh')
+setCaretToEnd()
+view.fire(carea(), 'onContextMenu', { clientX: 300, clientY: 300 })
+await tick()
+const aqText = () => view.textOf(view.find('sc-menu'))
+has(aqText(), '主角（2）', 'the 主角 group head counts the lead-tagged cards')
+has(aqText(), '配角（1）', 'the 配角 group head counts the support-tagged card')
+has(aqText(), '其他（4）', 'everything else falls into 其他')
+has(aqText(), '岩崎贤也', 'a lead (tagged 主角) is listed')
+has(aqText(), '绮丽蔷薇', 'a lead tagged with a space-separated keyword is recognised too')
+has(aqText(), '高宫诚', 'a support character is listed')
+ok(aqText().indexOf('主角（2）') < aqText().indexOf('配角（1）') && aqText().indexOf('配角（1）') < aqText().indexOf('其他（4）'), 'groups come in the order 主角 → 配角 → 其他')
+// 筛选：只留命中的组，计数跟着变
+view.fire(view.find('sc-menuinput'), 'onChange', { target: { value: '贤' } })
+await tick()
+has(aqText(), '主角（1）', 'filtering recounts the group')
+ok(aqText().indexOf('配角') === -1 && aqText().indexOf('其他') === -1, 'and drops the groups with no hit')
+view.fire(view.find('sc-menuinput'), 'onChange', { target: { value: '' } })
+await tick()
+view.fire(view.find('sc-menuback'), 'onMouseDown', {})
+await tick()
+view.click(view.find('sc-expandx'))
+await tick()
+// 方片页的分组一个都不许动（还是按卡片类型分）
+view.click(view.findAll('sc-segb').filter((n) => view.textOf(n) === '方片')[0])
+await tick()
+const gridHeads = view.findAll('sc-group').map((n) => view.textOf(n))
+ok(gridHeads.some((t) => /^人物 \(/.test(t)), 'the grid still groups by card type (人物)')
+ok(!gridHeads.some((t) => /主角|配角/.test(t)), 'and never by the dialogue-menu groups')
+view.click(view.findAll('sc-segb').filter((n) => view.textOf(n) === '分支')[0])
+await tick()
+
+// ── AR. 画布引用卡（「存档卡抽屉」拖取） ─────────────────────────────────────
+// 用户拍板：拖进来的是**引用** —— 不新建文件、不改卡片文件，位置只写 分支.json 的
+// refs[ctx][cardKey]；能摆能看能染、不能改内容、不连线、不参与自动排列。
+console.log('\nAR. reference cards dragged in from the archive drawer')
+const GRAPH_ONLY = (k) => k !== GRAPH
+const cardSnap = () => Object.keys(files).filter(GRAPH_ONLY).sort().map((k) => k + '=' + files[k]).join('\n')
+const snap0 = cardSnap()
+const g0 = JSON.parse(files[GRAPH])
+const g1pos0 = { x: g0.nodes['card/chapter-g1.md'].x, y: g0.nodes['card/chapter-g1.md'].y }
+const g2pos0 = { x: g0.nodes['card/chapter-g2.md'].x, y: g0.nodes['card/chapter-g2.md'].y }
+// 打开抽屉
+view.click(view.findAll('sc-btn').filter((n) => view.textOf(n) === '存档卡')[0])
+await tick()
+ok(!!view.findMaybe('sc-drawer'), 'the archive drawer opens from the nav bar')
+has(view.textOf(view.find('sc-drawer')), '人物', 'it lists the archive family (grouped by type)')
+has(view.textOf(view.find('sc-drawer')), '章节', 'and the branch cards of the other level')
+ok(view.findAll('sc-draweritem').length >= 5, 'with cards in it', view.findAll('sc-draweritem').length)
+// 从抽屉里拖一张人物卡到画布（左键）
+const drawerDrag = async (title, cxp, cyp) => {
+  const item = view.findAll('sc-draweritem').filter((n) => view.textOf(n).indexOf(title) !== -1)[0]
+  ok(!!item, 'the drawer has «' + title + '»')
+  view.fire(item, 'onPointerDown', { button: 0, clientX: 700, clientY: 300 })
+  await tick()
+  ok(!!view.findMaybe('sc-ghost'), 'dragging from the drawer shows a ghost card')
+  const c = toClient(cxp, cyp)
+  view.window('pointermove', { clientX: c.clientX, clientY: c.clientY })
+  await tick()
+  view.window('pointerup', { clientX: c.clientX, clientY: c.clientY })
+  await tick()
+}
+await drawerDrag('人物甲', 300, 200)
+const gRef = JSON.parse(files[GRAPH])
+// 注意键是 cardKey(card)：人物卡住在「卡片/」里，所以是 card/<文件>（archive/ 是「归档/」那族的）
+const refX = 'card/character-x.md'
+ok(!!(gRef.refs && gRef.refs.top && gRef.refs.top[refX]), 'dropping a card on the top canvas writes refs.top[cardKey]')
+ok(Number.isInteger(gRef.refs.top[refX].x) && Number.isInteger(gRef.refs.top[refX].y), 'with integer canvas coordinates', gRef.refs.top[refX])
+// 卡片文件一个都没改、一个新文件都没建（唯一落盘目标就是 分支.json）
+eq(cardSnap(), snap0, 'no card file changed and no new file was created')
+eq(gRef.nodes[refX], undefined, 'and the referenced card got no node record either')
+ok(!!view.findAll('sc-refcard').length, 'the reference is drawn on the canvas')
+ok(!!view.findMaybe('sc-refcard') && !view.findAll('sc-refcard').some((n) => kidsOf(n).some((x) => x.kind === 'host' && String(x.props.className || '').indexOf('sc-port') !== -1)),
+  'a reference card has no link ports')
+// 进节点画布，把一张**章节卡**拖进来：写在这个章节自己的 ctx 下
+view.fire(cardOf(G1), 'onDoubleClick', {})
+await tick()
+await drawerDrag('章节乙', 260, 180)
+const gRef2 = JSON.parse(files[GRAPH])
+const ctxG1 = 'card/chapter-g1.md'
+const refG2 = 'card/chapter-g2.md'
+ok(!!(gRef2.refs[ctxG1] && gRef2.refs[ctxG1][refG2]), 'on a chapter canvas the ref is stored under that chapter\'s ctx')
+eq(JSON.stringify({ x: gRef2.nodes[refG2].x, y: gRef2.nodes[refG2].y }), JSON.stringify(g2pos0), 'and the chapter card\'s own node x/y is untouched')
+// 同一张卡在两个 ctx 下各存一份，互不影响
+await drawerDrag('人物甲', 200, 340)
+const gRef3 = JSON.parse(files[GRAPH])
+const inTop = gRef3.refs.top[refX]
+const inCtx = gRef3.refs[ctxG1][refX]
+ok(!!inTop && !!inCtx, 'the same card can sit on both canvases at once')
+ok(inTop.y !== inCtx.y, 'and each canvas keeps its own position', [inTop, inCtx])
+eq(JSON.stringify({ x: gRef3.nodes[ctxG1].x, y: gRef3.nodes[ctxG1].y }), JSON.stringify(g1pos0), 'no level\'s own card was moved by any of this')
+const refElOf = (key) => view.findAll('sc-refcard').filter((n) => n.props['data-key'] === key)[0]
+ok(!!refElOf(refX), 'the dropped character reference is on this canvas')
+// 在画布上拖动这张引用卡：只改 refs 里的 x/y，被引用卡自己的 nodes 记录一动不动
+const rBefore = JSON.parse(files[GRAPH]).refs[ctxG1][refX]
+const nodeRecBefore = JSON.stringify(JSON.parse(files[GRAPH]).nodes[refX] || null)
+const dragA = toClient(rBefore.x + 60, rBefore.y + 40)
+const dragB = toClient(rBefore.x + 170, rBefore.y + 130)
+view.fire(refElOf(refX), 'onPointerDown', { button: 0, clientX: dragA.clientX, clientY: dragA.clientY })
+await tick()
+view.window('pointermove', { clientX: dragB.clientX, clientY: dragB.clientY })
+await tick()
+view.window('pointerup', { clientX: dragB.clientX, clientY: dragB.clientY })
+await tick()
+const rAfter = JSON.parse(files[GRAPH]).refs[ctxG1][refX]
+ok(rAfter.x !== rBefore.x || rAfter.y !== rBefore.y, 'dragging a reference card moves it (writes refs[ctx][cardKey].x/y)')
+ok(Number.isInteger(rAfter.x) && Number.isInteger(rAfter.y), 'the new position is integral')
+eq(JSON.stringify(JSON.parse(files[GRAPH]).nodes[refX] || null), nodeRecBefore, 'and the referenced card\'s own node record is untouched by that drag')
+ok(!!refElOf(refX), 'the dropped character reference is still on this canvas')
+view.fire(refElOf(refX), 'onContextMenu', { clientX: 300, clientY: 300 })
+await tick()
+const refMenu = view.textOf(view.find('sc-menu'))
+has(refMenu, '染色', 'the reference menu offers dyeing')
+has(refMenu, '从画布移开', 'and taking it off the canvas')
+ok(refMenu.indexOf('删除卡片文件') === -1 && refMenu.indexOf('复制') === -1 && refMenu.indexOf('连线') === -1,
+  'and nothing else (no delete / copy / link entries)', refMenu)
+view.fire(view.find('sc-menuback'), 'onMouseDown', {})
+await tick()
+// 双击＝只读详情（没有编辑入口、没有文档页签）
+view.fire(refElOf(refX), 'onDoubleClick', {})
+await wait(60)
+ok(!!winOf(refX), 'double-clicking a reference opens the detail window')
+eq(view.findAll('sc-tab').length, 0, 'the reference detail has no tabs (no document page)')
+eq(view.findMaybe('sc-docarea'), null, 'and no document editor')
+ok(view.textOf(winOf(refX)).indexOf('要改内容回方片页') !== -1, 'it says to edit the content back on the grid page')
+ok(!view.findAll('sc-btn').some((n) => view.textOf(n).indexOf('在详情里编辑') !== -1), 'and there is no edit entry at all')
+view.click(view.find('sc-expandx'))
+await tick()
+// 「从画布移开」只删 refs 那条
+view.fire(refElOf(refX), 'onContextMenu', { clientX: 300, clientY: 300 })
+await tick()
+view.click(view.findAll('sc-menuitem').filter((n) => view.textOf(n).indexOf('从画布移开') !== -1)[0])
+await tick()
+const gRef4 = JSON.parse(files[GRAPH])
+eq(gRef4.refs[ctxG1][refX], undefined, '从画布移开 drops just that ref entry')
+ok(!!gRef4.refs.top[refX], 'and leaves the other canvas\'s ref alone')
+ok(!!files[CARDS_DIR + '/character-x.md'], 'the card file is still there (references never delete files)')
+eq(cardSnap(), snap0, 'no card file touched, no file created')
+// 自动排列不动引用卡
+const beforeArrange = JSON.stringify(JSON.parse(files[GRAPH]).refs)
+view.click(view.findAll('sc-btn').filter((n) => view.textOf(n) === '自动排列')[0])
+await tick()
+await tick()
+eq(JSON.stringify(JSON.parse(files[GRAPH]).refs), beforeArrange, 'auto-arrange leaves the reference positions alone')
+// 只读详情那条窗口关掉
+if (winOf(refX)) { view.click(view.find('sc-expandx')); await tick() }
+// 批量：框选一张原生卡 + 一张引用卡 → 「删除卡片文件」只数原生卡，引用卡只移开
+// （就在这个章节画布上做：这里既有原生节点卡，也有刚拖进来的引用）
+await drawerDrag('人物甲', 460, 360)
+const gBeforeBatch = JSON.parse(files[GRAPH])
+ok(!!gBeforeBatch.refs[ctxG1][refX], 'the character reference is back on this canvas')
+const nativeKey = Object.keys(gBeforeBatch.nodes).filter(function (k) {
+  const rec = gBeforeBatch.nodes[k]
+  if (k.indexOf('chapter-') !== -1) return false
+  if (rec.x === null || rec.cx === null) return false
+  // 挑一张**没有文档**的：这样确认框就是最朴素的两步，不带文档三选一
+  return !files[DOCS_DIR + '/' + k.replace(/^card\//, '')]
+})[0]
+ok(!!nativeKey, 'there is a placed native card without a document to mix into the batch', nativeKey)
+const nativeFile = nativeKey.replace(/^card\//, '')
+const rNative = gBeforeBatch.nodes[nativeKey]
+const rRef = gBeforeBatch.refs[ctxG1][refX]
+const rn = { x: rNative.cx, y: rNative.cy, w: 156, h: 112 }
+const boxA = toClient(Math.min(rn.x, rRef.x) - 20, Math.min(rn.y, rRef.y) - 20)
+const boxB = toClient(Math.max(rn.x + rn.w, rRef.x + rn.w) + 20, Math.max(rn.y + rn.h, rRef.y + rn.h) + 20)
+view.fire(view.find('sc-canvas'), 'onPointerDown', { button: 2, clientX: boxA.clientX, clientY: boxA.clientY, target: blank })
+view.window('pointermove', { clientX: boxB.clientX, clientY: boxB.clientY, buttons: 2 })
+await tick()
+view.window('pointerup', { clientX: boxB.clientX, clientY: boxB.clientY })
+await tick()
+const selNow = view.findAll('sc-card').filter((n) => String(n.props.className).indexOf(' on') !== -1 || String(n.props.className).indexOf('on ') !== -1).map((n) => n.props['data-key'])
+ok(selNow.indexOf(refX) !== -1 && selNow.indexOf(nativeKey) !== -1, 'the marquee selects both the native card and the reference', selNow)
+view.fire(refElOf(refX), 'onContextMenu', { clientX: 400, clientY: 400 })
+await tick()
+// 框选收尾的那一下右键是被吃掉的（AF 里的老规矩），所以再点一下才出批量菜单
+view.fire(refElOf(refX), 'onContextMenu', { clientX: 400, clientY: 400 })
+await tick()
+const batchText = view.textOf(view.find('sc-menu'))
+const selRefs = selNow.filter((k) => !!gBeforeBatch.refs[ctxG1][k])
+const selNative = selNow.filter((k) => !gBeforeBatch.refs[ctxG1][k])
+ok(selRefs.indexOf(refX) !== -1, 'the box mixes a reference in with the native cards')
+ok(selNative.length >= 1, 'and at least one native card')
+has(batchText, '删除这 ' + selNative.length + ' 张卡片文件', 'the batch delete counts only the native cards (references are not counted)')
+view.click(view.findAll('sc-menuitem').filter((n) => view.textOf(n).indexOf('删除这 ') !== -1)[0])
+await tick()
+ok(!!view.findMaybe('sc-modal'), 'the plain confirm appears for the native cards')
+view.click(btnOf('删除'))
+await tick()
+await tick()
+const gAfterBatch = JSON.parse(files[GRAPH])
+for (const k of selNative) {
+  eq(files[CARDS_DIR + '/' + k.replace(/^card\//, '')], undefined, 'native card file deleted: ' + k)
+  ok(gAfterBatch.nodes[k] === undefined, 'and it left the graph: ' + k)
+}
+ok(!!files[CARDS_DIR + '/character-x.md'], 'the referenced card file was NOT deleted')
+ok(!(gAfterBatch.refs[ctxG1] && gAfterBatch.refs[ctxG1][refX]), 'and the reference was only taken off the canvas')
+// 卡片文件被删 → 重新载入时对应的 refs 一起消失，并且会回写一次
+files[CARDS_DIR + '/character-y-will-vanish.md'] = md({ id: 'character-y', type: 'character', title: '临时人物乙', summary: '一会儿就删掉' })
+view.click(view.findAll('sc-btn').filter((n) => view.textOf(n) === '刷新')[0])
+await tick()
+await tick()
+await tick()
+await drawerDrag('临时人物乙', 480, 240)
+const refY = 'card/character-y-will-vanish.md'
+ok(!!JSON.parse(files[GRAPH]).refs[ctxG1][refY], 'a ref to the doomed character is in place')
+delete files[CARDS_DIR + '/character-y-will-vanish.md']
+const writesBeforeReload = writes.length
+view.click(view.findAll('sc-btn').filter((n) => view.textOf(n) === '刷新')[0])
+await tick()
+await tick()
+await tick()
+const gPruned = JSON.parse(files[GRAPH])
+ok(!gPruned.refs[ctxG1] || gPruned.refs[ctxG1][refY] === undefined, 'once the card file is gone the ref disappears on reload')
+ok(writes.length > writesBeforeReload, 'and that pruning was written back to 分支.json')
+// 只读模式：抽屉能看不能拖
+const writeKept = bridge.fsWrite
+bridge.fsWrite = undefined
+const refsBeforeRO = JSON.stringify(JSON.parse(files[GRAPH]).refs || {})
+const roItem = view.findAll('sc-draweritem').filter((n) => view.textOf(n).indexOf('人物甲') !== -1)[0]
+view.fire(roItem, 'onPointerDown', { button: 0, clientX: 700, clientY: 300 })
+await tick()
+eq(view.findMaybe('sc-ghost'), null, 'in read-only mode the drawer does not start a drag')
+has(view.text(), '只读', 'and it explains why (the panel is read-only)')
+view.window('pointerup', { clientX: 500, clientY: 300 })
+await tick()
+eq(JSON.stringify(JSON.parse(files[GRAPH]).refs || {}), refsBeforeRO, 'nothing was dropped while read-only')
+bridge.fsWrite = writeKept
+view.click(view.findAll('sc-btn').filter((n) => view.textOf(n) === '存档卡')[0])
+await tick()
+eq(view.findMaybe('sc-drawer'), null, 'the drawer closes again')
+view.click(view.findAll('sc-navbtn').filter((n) => n.props.title === '回到上级')[0])
+await tick()
+
+// ── AS. 行首前缀整体删除（③b） ───────────────────────────────────────────────
+// 用户原话：「应该把角色名当做一个整体，删除的时候整体删除，有的时候会出现删除一半的情况，
+// 非常抽象」。三种前缀（角色首行 / 续行 `　　…：` / 旁白的两个全角空格）都按一整个删。
+console.log('\nAS. the line-start prefix is deleted as one unit')
+delete h.storage()[DRAFT_LS]
+view.click(view.findAll('sc-segb').filter((n) => view.textOf(n) === '分支')[0])
+await tick()
+view.fire(cardOf(G1), 'onDoubleClick', {})
+await tick()
+view.fire(cardOf(N1), 'onDoubleClick', {})
+await wait(60)
+view.click(tabOf('文档'))
+await tick()
+const careaAS = () => view.findMaybe('sc-docarea')
+const setTextAS = async (v) => { view.fire(careaAS(), 'onChange', { target: { value: v } }); await tick() }
+// 摆光标 / 选区：mini-react 的 caretBox 返回的是一个活盒子
+const caretAS = (start, end) => { const b = view.caretBox(careaAS()); b.start = start; b.end = end === undefined ? start : end; return b }
+const keyAS = async (key, at, extra) => {
+  caretAS(at)
+  view.fire(careaAS(), 'onKeyDown', Object.assign({ key: key, preventDefault() {}, stopPropagation() {} }, extra || {}))
+  await tick()
+}
+// ①光标紧跟 `「勿忘我」：` 之后 Backspace → 整块前缀消失、正文留下、光标在行首
+await setTextAS('「勿忘我」：你终于来了。')
+await keyAS('Backspace', '「勿忘我」：'.length)
+eq(careaAS().props.value, '你终于来了。', 'Backspace right after the 「name」: prefix removes the whole prefix')
+eq(view.caretBox(careaAS()).start, 0, 'and the caret lands at the start of the line')
+// ②光标在前缀中间（`「勿忘` 之后）Backspace → 也整块消失
+await setTextAS('「勿忘我」：你终于来了。')
+await keyAS('Backspace', '「勿忘'.length)
+eq(careaAS().props.value, '你终于来了。', 'Backspace inside the prefix removes the whole thing too')
+// ③行首 Delete → 整块消失
+await setTextAS('「勿忘我」：你终于来了。')
+await keyAS('Delete', 0)
+eq(careaAS().props.value, '你终于来了。', 'Delete at the start of the line removes the whole prefix')
+// ④前缀中间 Delete → 整块消失
+await setTextAS('「勿忘我」：你终于来了。')
+await keyAS('Delete', 3)
+eq(careaAS().props.value, '你终于来了。', 'Delete inside the prefix removes the whole thing too')
+// ⑤续行 `　　　　：` 整体删（不许只删冒号、把对齐空格留着）
+await setTextAS('「勿忘我」：你终于来了。\n' + padCont + '伞收在门口就行。')
+await keyAS('Backspace', ('「勿忘我」：你终于来了。\n' + padCont).length)
+eq(careaAS().props.value, '「勿忘我」：你终于来了。\n伞收在门口就行。', 'the continuation prefix is removed as one block (spaces + colon together)')
+// ⑥旁白行首 Backspace → 两个全角空格一起删
+await setTextAS('　　雨停之后，屋檐还在滴水。')
+await keyAS('Backspace', 2)
+eq(careaAS().props.value, '雨停之后，屋檐还在滴水。', 'the narration prefix (two full-width spaces) goes in one go')
+// ⑦普通行里 Backspace / Delete 行为不变（不许抢）
+await setTextAS('普通的一行。')
+caretAS(2)
+let asPrevented = false
+view.fire(careaAS(), 'onKeyDown', { key: 'Backspace', preventDefault() { asPrevented = true }, stopPropagation() {} })
+await tick()
+eq(careaAS().props.value, '普通的一行。', 'Backspace in a plain line is left to the browser (text unchanged here)')
+ok(!asPrevented, 'and it does not preventDefault the browser default')
+caretAS(2)
+view.fire(careaAS(), 'onKeyDown', { key: 'Delete', preventDefault() { asPrevented = true }, stopPropagation() {} })
+await tick()
+ok(!asPrevented, 'Delete in a plain line is left to the browser too')
+// ⑧有跨行选区时 Backspace 走默认
+await setTextAS('「勿忘我」：你终于来了。\n　　雨停了。')
+caretAS(3, 9)
+asPrevented = false
+view.fire(careaAS(), 'onKeyDown', { key: 'Backspace', preventDefault() { asPrevented = true }, stopPropagation() {} })
+await tick()
+ok(!asPrevented, 'a multi-line selection is not hijacked')
+// 选中的整段正好落在前缀里 → 整块删（选中名字三个字删掉，别留下「」：）
+await setTextAS('「勿忘我」：你终于来了。')
+caretAS(1, 4)
+view.fire(careaAS(), 'onKeyDown', { key: 'Backspace', preventDefault() {}, stopPropagation() {} })
+await tick()
+eq(careaAS().props.value, '你终于来了。', 'a selection inside the prefix still deletes the whole prefix (no 「」：leftovers)')
+// ⑨删掉之后状态行不再写「正在写：XX」
+await setTextAS('')
+caretAS(0)
+view.fire(careaAS(), 'onContextMenu', { clientX: 300, clientY: 300 })
+await tick()
+view.click(menuItem('勿忘我'))
+await tick()
+has(view.text(), '正在写：勿忘我', 'the status bar shows the role being written')
+await keyAS('Backspace', '「勿忘我」：'.length)
+ok(view.text().indexOf('正在写：') === -1, 'deleting the prefix clears the role chip too')
+view.click(view.find('sc-expandx'))
+await tick()
+
+// ── AT. 色卡菜单里的色盘不许把菜单顶掉（③c） ─────────────────────────────────
+// 用户原话：「还有色盘界面，只要点击就会直接弹出去」—— 一点色盘，整块色卡菜单就没了。
+// 两条成因都堵：色盘的 change 落到了「换色 + 关菜单」那条路上；遮罩的 mousedown 兜底。
+console.log('\nAT. the colour palette keeps the menu open')
+view.click(view.findAll('sc-segb').filter((n) => view.textOf(n) === '方片')[0])
+await tick()
+const tileAT = () => view.findAll('sc-tile').filter((n) => view.textOf(n).indexOf('人物甲') !== -1)[0]
+const openColorMenuAT = async () => {
+  view.fire(tileAT(), 'onContextMenu', { clientX: 300, clientY: 300 })
+  await tick()
+}
+await openColorMenuAT()
+ok(!!view.findMaybe('sc-menu'), 'the tile colour menu opens')
+const colorInputAT = () => view.findAll('sc-colorinput')[0]
+ok(!!colorInputAT(), 'the menu has a colour palette input')
+// ①点色盘（mousedown / click）→ 菜单还在
+view.fire(colorInputAT(), 'onMouseDown', {})
+await tick()
+ok(!!view.findMaybe('sc-menu'), 'pressing the palette does not close the menu')
+view.fire(colorInputAT(), 'onClick', {})
+await tick()
+ok(!!view.findMaybe('sc-menu'), 'clicking the palette does not close it either')
+// ⑤选色卡：应用并关菜单 —— 这条老行为不许被改坏
+view.click(view.findAll('sc-swatch')[0])
+await tick()
+eq(view.findMaybe('sc-menu'), null, 'picking a swatch still applies and closes the menu (unchanged)')
+// ②色盘 change 带着**和当前一样**的值 → 颜色不变、菜单也不关
+await openColorMenuAT()
+const sameValue = String(files[CARDS_DIR + '/character-x.md'].match(/color:\s*(\S+)/)[1])
+eq(String(colorInputAT().props.value).toLowerCase(), sameValue.toLowerCase(), 'the palette starts at the card\'s current colour')
+const beforeSame = files[CARDS_DIR + '/character-x.md']
+view.fire(colorInputAT(), 'onChange', { target: { value: sameValue.toUpperCase() } })
+await tick()
+eq(files[CARDS_DIR + '/character-x.md'], beforeSame, 'a change event carrying the same colour changes nothing (Chromium fires one when the picker opens)')
+ok(!!view.findMaybe('sc-menu'), 'and the menu stays open')
+// ③色盘 change 带新颜色 → 实时生效、菜单仍然开着
+view.fire(colorInputAT(), 'onChange', { target: { value: '#112233' } })
+await tick()
+await tick()
+has(files[CARDS_DIR + '/character-x.md'], 'color: #112233', 'a new colour from the palette is applied immediately')
+ok(!!view.findMaybe('sc-menu'), 'and the menu is still open so you can keep adjusting')
+// ④遮罩兜底：target 落在 .sc-menu 里就不关；外面才关
+const backAT = view.find('sc-menuback')
+const fakeInside = { closest: function (sel) { return sel === '.sc-menu' ? {} : null } }
+const fakeOutside = { closest: function () { return null } }
+view.fire(backAT, 'onMouseDown', { target: fakeInside })
+await tick()
+ok(!!view.findMaybe('sc-menu'), 'a mousedown whose target is inside the menu does not close it (backdrop fallback)')
+view.fire(backAT, 'onMouseDown', { target: fakeOutside })
+await tick()
+eq(view.findMaybe('sc-menu'), null, 'a mousedown outside the menu still closes it')
+// ⑥SwatchEditor 里的色盘：点开不许把弹窗收掉
+await openColorMenuAT()
+const editSwatchesAT = view.findAll('sc-btn').filter((n) => view.textOf(n).indexOf('编辑色卡') !== -1)[0]
+ok(!!editSwatchesAT, 'the colour menu offers 编辑色卡…（a plain .sc-btn, like before）')
+view.click(editSwatchesAT)
+await tick()
+const swModal = view.findMaybe('sc-modal')
+ok(!!swModal, 'the swatch editor modal opens')
+const swInput = view.findAll('sc-colorinput')[0]
+ok(!!swInput, 'and it has a colour palette input')
+view.fire(swInput, 'onMouseDown', {})
+await tick()
+view.fire(swInput, 'onClick', {})
+await tick()
+view.fire(swInput, 'onChange', { target: { value: String(swInput.props.value) } })
+await tick()
+ok(!!view.findMaybe('sc-modal'), 'opening/using that palette does not close the modal')
+view.click(btnOf('取消'))
+await tick()
+eq(view.findMaybe('sc-modal'), null, 'the modal closes when you cancel it')
+view.click(view.findAll('sc-segb').filter((n) => view.textOf(n) === '分支')[0])
+await tick()
+
+// ── AU. 抽屉自己吃滚轮（用户报「存档卡没法用滚轮上下滑动」） ────────────────────
+// 悬停在抽屉上时滚轮归抽屉：画布不缩放、**也不许 preventDefault**（拦了默认行为它就
+// 滚不动了）。标记是属性 data-wheel="own"，不按类名硬编码。
+console.log('\nAU. the drawer takes the wheel over from the canvas')
+view.click(view.findAll('sc-btn').filter((n) => view.textOf(n) === '存档卡')[0])
+await tick()
+const drawerEl = () => view.findMaybe('sc-drawer')
+ok(!!drawerEl(), 'the drawer is open')
+eq(String(drawerEl().props['data-wheel'] || ''), 'own', 'the drawer is marked as a wheel-owning panel')
+const zoomAU = () => parseInt(String(view.find('sc-boardtip').props.children), 10)
+const zAU0 = zoomAU()
+// 注：滚轮是插件自己用 ref + addEventListener 挂在 .sc-canvas 上的（见 AE），所以这里
+// 也走原生监听器：`view.el(canvas, 'wheel', ev)`，ev.target 用来冒充「指针落在哪」。
+// ①对抽屉里的元素派发 wheel → 不缩放、也没被 preventDefault
+let auPrevented = false
+const itemAU = view.findAll('sc-draweritem')[0]
+ok(!!itemAU, 'the drawer has items to wheel over')
+const drawerTarget = { closest: function (sel) { return sel === '[data-wheel="own"]' ? {} : null } }
+view.el(view.find('sc-canvas'), 'wheel', { deltaY: -120, clientX: 700, clientY: 300, target: drawerTarget, preventDefault() { auPrevented = true } })
+await tick()
+eq(zoomAU(), zAU0, 'wheeling over a drawer item does not zoom the canvas')
+ok(!auPrevented, 'and it does not preventDefault (that would break the drawer\'s own scrolling)')
+let auMoved = false
+const auT0 = translateOf()
+let auX = null
+view.el(view.find('sc-canvas'), 'wheel', { deltaY: -120, clientX: 700, clientY: 120, target: drawerTarget, preventDefault() { auPrevented = true } })
+await tick()
+eq(zoomAU(), zAU0, 'wheeling over the drawer itself does not zoom either')
+ok(!auPrevented, 'and is left to the browser (the nearest scroll ancestor is the drawer)')
+auX = translateOf()
+eq(auX.x, auT0.x, 'and the canvas does not pan while you wheel over the drawer')
+eq(auX.y, auT0.y, 'vertically either')
+// ②画布上的 wheel → 照旧缩放（现状不许被改坏）
+view.el(view.find('sc-canvas'), 'wheel', { deltaY: -120, clientX: 400, clientY: 300, target: blank, preventDefault() {} })
+await tick()
+ok(zoomAU() > zAU0, 'wheeling on the canvas still zooms in', [zAU0, zoomAU()])
+// ③浮窗里的 wheel 仍然不被拦（顶层双击章节卡是「进入下级」，所以用右键菜单展开一个窗）
+view.fire(cardOf(G1), 'onContextMenu', { clientX: 300, clientY: 300 })
+await tick()
+view.click(view.findAll('sc-menuitem').filter((n) => view.textOf(n).indexOf('展开') !== -1)[0])
+await wait(60)
+ok(!!view.findMaybe('sc-expand'), 'a window is open')
+const zBeforeWin = zoomAU()
+let winPrevented = false
+const winTarget = { closest: function (sel) { return sel === '[data-wheel="own"]' || sel === '.sc-expand' ? {} : null } }
+view.el(view.find('sc-canvas'), 'wheel', { deltaY: -120, clientX: 400, clientY: 300, target: winTarget, preventDefault() { winPrevented = true } })
+await tick()
+ok(!winPrevented, 'the window still swallows the wheel without touching the default')
+eq(zoomAU(), zBeforeWin, 'and the canvas does not zoom under it')
+eq(String(view.find('sc-expand').props['data-wheel'] || ''), 'own', 'the window root carries the same marker')
+view.click(view.find('sc-expandx'))
+await tick()
+// ④CSS 契约：抽屉自己滚、头部 sticky、旧的内层滚动容器没了
+const cssAU = fs.readFileSync('src/10-css.js', 'utf8')
+const drawerRule = cssAU.slice(cssAU.indexOf('.sc-drawer{'), cssAU.indexOf('.sc-drawersticky'))
+has(drawerRule, 'overflow-y:auto', 'the drawer is itself a vertical scroll container')
+has(drawerRule, 'overscroll-behavior:contain', 'and it does not chain the scroll to the page')
+has(cssAU.slice(cssAU.indexOf('.sc-drawersticky{'), cssAU.indexOf('.sc-drawerhead{')), 'position:sticky', 'the header row sticks to the top while the list scrolls')
+ok(cssAU.indexOf('.sc-drawerbody') === -1, 'the old inner scroll container is gone (one container only)')
+view.click(view.findAll('sc-btn').filter((n) => view.textOf(n) === '存档卡')[0])
+await tick()
 
 // 替身自己的 hook 守卫也得是活的，否则「组件被当普通函数调用」这类崩溃在无头测试里
 // 永远看不见 —— 这正是它一路全绿的原因。放在最后跑：它会换掉全局 window。

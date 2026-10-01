@@ -6,7 +6,7 @@ const React = require('react')
 
 const TAB_ID = 'dsh-script-cards/panel'
 const TAB_KIND = 'script-cards'
-const VERSION = 'v0.1.1'
+const VERSION = 'v0.2.0-alpha.3'
 
 // 面板里所有「浮在中间的那块」统一一个宽度：展开的卡片、各个对话框。
 // 之前对话框有 380 / 420 / 520 三档，展开的卡片又是 460，点来点去界面宽度一直在变
@@ -24,15 +24,21 @@ const inject = ['slots', 'sidebarRightTabs', 'remote', 'remote.workspaceFiles']
 
 // 档案目录的默认名。面板「设置」里可以改（按项目存在浏览器本地），所以这套约定
 // 不是写死的 —— 换语言、换习惯都能用。
-const DEFAULT_DIRS = { archive: '剧本档案', cards: '卡片', sub: '归档' }
+// docs 是「每张卡片一份的独立文档」放的地方：<档案目录>/文档/<卡片文件名>。
+// 文档是**独立文件**，不是卡片正文 —— 卡片正文照旧在 卡片/ 里。
+const DEFAULT_DIRS = { archive: '剧本档案', cards: '卡片', sub: '归档', docs: '文档' }
+const DIR_KEYS = ['archive', 'cards', 'sub', 'docs']
 
 /** 结构图谱的文件名，放在档案目录下。 */
 const GRAPH_FILE = '分支.json'
 
 function normDirs(raw) {
-  const out = { archive: DEFAULT_DIRS.archive, cards: DEFAULT_DIRS.cards, sub: DEFAULT_DIRS.sub }
+  const out = {
+    archive: DEFAULT_DIRS.archive, cards: DEFAULT_DIRS.cards,
+    sub: DEFAULT_DIRS.sub, docs: DEFAULT_DIRS.docs,
+  }
   if (!raw || typeof raw !== 'object') return out
-  for (const k of ['archive', 'cards', 'sub']) {
+  for (const k of DIR_KEYS) {
     const v = String(raw[k] == null ? '' : raw[k]).trim()
     // 目录名只能是单层名字：不许带斜杠，也不许是 . 或 ..
     if (!v || v === '.' || v === '..' || /[\\/]/.test(v)) continue
@@ -42,7 +48,7 @@ function normDirs(raw) {
 }
 
 function sameDirs(a, b) {
-  return !!a && !!b && a.archive === b.archive && a.cards === b.cards && a.sub === b.sub
+  return !!a && !!b && DIR_KEYS.every(function (k) { return a[k] === b[k] })
 }
 
 // 预置色卡（8 个通用色）。想用自己作品/角色的印象色，就在面板里「编辑色卡」加；

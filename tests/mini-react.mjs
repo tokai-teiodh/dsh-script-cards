@@ -49,12 +49,21 @@ export function createHarness() {
   // 假元素的滚动尺寸：标签条那种横向滚动容器要读 scrollWidth / clientWidth / scrollLeft。
   // 按渲染路径存，测试可以 view.scrollBox(node) 拿到它、预置尺寸，再断言拖动之后的 scrollLeft。
   const scrollBoxes = new Map()
+  // 假元素的光标位置：文档 textarea 的「Enter / Shift+Enter 手工插文本 + 落光标」要能测
+  // —— 测试先 view.caretBox(area).start = n 摆好光标，再按键，然后断言插到了哪、光标落在哪。
+  const caretBoxes = new Map()
   const created = []
   let storage = {}
 
   function scrollBoxOf(p) {
     let b = scrollBoxes.get(p)
     if (!b) { b = { scrollLeft: 0, scrollWidth: 0, clientWidth: 0 }; scrollBoxes.set(p, b) }
+    return b
+  }
+
+  function caretBoxOf(p) {
+    let b = caretBoxes.get(p)
+    if (!b) { b = { start: 0, end: 0, focused: false, sets: 0 }; caretBoxes.set(p, b) }
     return b
   }
 
@@ -125,6 +134,7 @@ export function createHarness() {
     let map = elListeners.get(node.path)
     if (!map) { map = new Map(); elListeners.set(node.path, map) }
     const box = scrollBoxOf(node.path)
+    const caret = caretBoxOf(node.path)
     return {
       __host: node,
       getBoundingClientRect: function () { return node.rect },
@@ -133,6 +143,14 @@ export function createHarness() {
       set scrollLeft(v) { box.scrollLeft = Number(v) || 0 },
       get scrollWidth() { return box.scrollWidth },
       get clientWidth() { return box.clientWidth },
+      // 光标（textarea 用）：受控 textarea 手工插文本要靠它定位
+      get selectionStart() { return caret.start },
+      set selectionStart(v) { caret.start = Number(v) || 0 },
+      get selectionEnd() { return caret.end },
+      set selectionEnd(v) { caret.end = Number(v) || 0 },
+      setSelectionRange: function (a, b) { caret.start = Number(a) || 0; caret.end = Number(b) || 0; caret.sets++ },
+      focus: function () { caret.focused = true },
+      blur: function () { caret.focused = false },
       addEventListener: function (type, fn) {
         if (!map.has(type)) map.set(type, [])
         map.get(type).push(fn)
@@ -437,6 +455,8 @@ export function createHarness() {
       flush: function () { if (dirty) renderNow() },
       // 预置/读取某个元素的滚动尺寸（标签条的拖动靠它断言）
       scrollBox: function (node) { return scrollBoxOf(node.path) },
+      // 预置/读取某个元素的光标（文档 textarea 的台词插入靠它断言）
+      caretBox: function (node) { return caretBoxOf(node.path) },
     }
   }
 
