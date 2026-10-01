@@ -3329,6 +3329,61 @@ const modelAV = fs.readFileSync('src/30-model.js', 'utf8')
 has(modelAV, 'out.objects = normObjects(raw.objects)', 'the graph reader normalises objects')
 has(modelAV, 'out.groups = normGroups(raw.groups)', 'and groups')
 has(fs.readFileSync('src/50-api.js', 'utf8'), 'objects: graph.objects || {}', 'and they survive a graph write through the bridge')
+// ⑱ 源码契约：文本框**不要底**（用户原话「文本框不要底」）—— 不填底色，下面的色块透上来；
+// 矩形方框那边照旧要有色（它就只有颜色这一件事）。
+const cssObjAV = fs.readFileSync('src/10-css.js', 'utf8')
+has((cssObjAV.match(/\.sc-objtext\{[^}]*\}/) || [''])[0], 'background:transparent', 'the canvas text box has no fill')
+has((cssObjAV.match(/\.sc-objrect\{[^}]*\}/) || [''])[0], 'background:color-mix', 'the rectangle box still has its colour')
+
+// ── AZ. 画布层序（用户 2026-10-01 拍板）─────────────────────────────────────────
+// 从下往上：分组背景 → 有颜色的方框 → 文字 → 其他所有卡片。DOM 顺序就是叠放顺序，
+// 三层互不穿插（没有哪张卡被压到文字底下）。真浏览器里摸点的那一版在 visual 的 objects 幕。
+console.log('\nAZ. canvas stacking order: colour box, then text, then every card')
+// 前面的小节可能把对象删掉了，这里先补齐：画布上同时要有方框、文本框和卡片
+if (!objNodes('text').length) {
+  openBlank(620, 430)
+  await tick()
+  view.click(pickItem('新建文本框'))
+  await tick()
+  await tick()
+  const edAZ = view.findMaybe('sc-objedit')
+  if (edAZ) { view.fire(edAZ, 'onBlur', {}); await tick() }
+}
+if (!objNodes('rect').length) {
+  openBlank(300, 430)
+  await tick()
+  view.click(pickItem('新建矩形方框'))
+  await tick()
+  await tick()
+}
+const orderAZ = []
+;(function walkAZ(n) {
+  if (!n) return
+  if (n.kind === 'host') {
+    const cls = String(n.props.className || '')
+    if (cls.indexOf('sc-groupbg') !== -1) orderAZ.push('group')
+    else if (cls.indexOf('sc-objrect') !== -1) orderAZ.push('rect')
+    else if (cls.indexOf('sc-objtext') !== -1) orderAZ.push('text')
+    else if (cls.indexOf('sc-card') !== -1) orderAZ.push('card')
+  }
+  if (n.children) for (const c of n.children) walkAZ(c)
+})(view.tree())
+const firstAZ = (k) => orderAZ.indexOf(k)
+const lastAZ = (k) => orderAZ.lastIndexOf(k)
+ok(firstAZ('rect') !== -1 && firstAZ('text') !== -1 && firstAZ('card') !== -1,
+  'the canvas has a colour box, a text box and cards', orderAZ)
+ok(lastAZ('rect') < firstAZ('text'), 'the colour box is below the text box', orderAZ)
+ok(lastAZ('text') < firstAZ('card'), 'and both of them are below every card (cards never sink under a text box)', orderAZ)
+// 分组背景只在悬停某个组的时候才画出来（树里不一定有），所以它的位置用源码契约钉住：
+// 渲染那一块里这几个数组的先后顺序就是叠放顺序
+const bvAZ = fs.readFileSync('src/85-boardview.js', 'utf8')
+const endAZ = bvAZ.indexOf('...guideEls')
+const orderBlockAZ = bvAZ.slice(Math.max(0, endAZ - 600), endAZ)
+const atAZ = (s) => orderBlockAZ.indexOf(s)
+ok(endAZ > 0 && atAZ('groupBgEl') !== -1 && atAZ('groupBgEl') < atAZ('rectEls') &&
+  atAZ('rectEls') < atAZ('textEls') && atAZ('textEls') < atAZ('cardEls') &&
+  atAZ('cardEls') < atAZ('refEls'),
+  'the render block keeps 分组背景 < 方框 < 文字 < 卡片 < 引用卡', orderBlockAZ.replace(/\s+/g, ' ').slice(-160))
 
 // ── AY. 底部状态栏：最多两行、超出的从最上面藏、按钮不被裁 ──────────────────────
 // 面板一窄，那几句提示就换行，整条状态栏跟着长高、把画布往上挤（他原话：「他在界面

@@ -470,7 +470,8 @@ function sceneMarkup(scene) {
   if (scene === 'objects') {
     // 独立对象那一幕：一个矩形方框（半透明底色）+ 压在它上面的文本框（角色色 + 缩放手柄），
     // 底下那层是分组悬停时浮出来的淡背景，右边一张原生卡用来比层级。
-    // DOM 顺序照 85-boardview 的真实渲染顺序：分组背景 → 卡片 → 方框 → 文本框。
+    // DOM 顺序照 85-boardview 的真实渲染顺序（用户 2026-10-01 拍板的层序，从下往上）：
+    // 分组背景 → 有颜色的方框 → 文字 → 其他所有卡片。
     const groupBg = '<div class="sc-groupbg" data-group="g1" style="left:40px;top:130px;width:320px;height:170px"></div>'
     const nodeCard = '<div class="sc-card" data-key="card/node-n1.md" data-type="node" style="left:400px;top:150px;width:156px;height:112px">' +
       '<div class="sc-cardrow"><span class="sc-cardname">节点一</span></div>' +
@@ -484,6 +485,11 @@ function sceneMarkup(scene) {
       '<div class="sc-objgrip"></div></div>'
     const boxText = '<div class="sc-obj sc-objtext dye" data-key="obj/t1" data-obj="text" style="left:80px;top:175px;width:200px;height:64px;--sc-accent:#8EB2FC">' +
       '<div class="sc-objbody">第二幕 转折</div><div class="sc-objgrip"></div></div>'
+    // 又一张卡，压在方框与文字上（只盖住右边一截，文本框中心还露在外面）：
+    // 用来量「卡片在最上面」—— 三层叠在一起的那一点，摸到的必须是卡片。
+    const overCard = '<div class="sc-card" data-key="card/node-n2.md" data-type="node" style="left:200px;top:170px;width:156px;height:112px">' +
+      '<div class="sc-cardrow"><span class="sc-cardname">节点二</span></div>' +
+      '<div class="sc-cardsum">我压在文字和色块上面。</div></div>'
     return '<div class="sc-nav" style="position:absolute;left:0;right:0;top:0;z-index:50">' +
       '<button class="sc-navbtn">‹</button><button class="sc-navbtn">›</button>' +
       '<button class="sc-navbtn">⌂</button><button class="sc-navbtn">⟳</button>' +
@@ -493,7 +499,7 @@ function sceneMarkup(scene) {
       '<span class="sc-boardtip">100%</span>' +
       '</div>' +
       '<div class="sc-stage" style="transform:translate(24px,64px) scale(1)">' +
-      '<div class="sc-dots"></div>' + guide + groupBg + nodeCard + boxRect + boxText +
+      '<div class="sc-dots"></div>' + guide + groupBg + boxRect + boxText + nodeCard + overCard +
       '</div>' +
       '<div class="sc-status" style="position:absolute;left:0;right:0;bottom:0;z-index:50">' +
       '<span>下级：排本章节的情节顺序（双击卡片展开）</span><span class="sp"></span>' +
@@ -942,18 +948,23 @@ window.__probeAll = function () {
       z: cs.zIndex,
     }
   })()
-  // 谁压在谁上面：文本框的中心点摸到的应当是文本框（方框在它下面）；
-  // 方框露在文本框外面的那一条，摸到的应当是方框本身。
+  // 谁压在谁上面：层序（从下往上）＝ 有颜色的方框 → 文字 → 其他所有卡片。
+  // 文本框中心在方框里（摸到文本框＝文字比方框高）；方框露在外面的那一条摸到方框本身；
+  // 三层叠在一起的那一点必须摸到卡片（卡片在最上面）。
   out.overlap = (function () {
     const t = document.querySelector('.sc-objtext')
     const r = document.querySelector('.sc-objrect')
     if (!t || !r) return null
     const tb = t.getBoundingClientRect()
     const rb = r.getBoundingClientRect()
-    const onText = document.elementFromPoint(tb.left + tb.width / 2, tb.top + tb.height / 2)
-    const onRect = document.elementFromPoint(rb.left + 6, rb.top + rb.height - 6)
     const clsOf = function (el) { return el ? String(el.className || '') : '' }
-    return { onText: clsOf(onText), onRect: clsOf(onRect) }
+    const at = function (x, y) { return clsOf(document.elementFromPoint(x, y)) }
+    return {
+      onText: at(tb.left + tb.width / 2, tb.top + tb.height / 2),
+      onRect: at(rb.left + 6, rb.top + rb.height - 6),
+      // 这个点在方框 ∩ 文字 ∩ 卡片 里（卡片只盖住方框右边一截）
+      onCardOver: at(rb.left + rb.width - 40, tb.top + 12),
+    }
   })()
   // 卡片那条：时间是不是单独一行、右下角有没有缩放手柄、对齐辅助线是不是细线
   out.cardBits = (function () {
@@ -1443,6 +1454,8 @@ function checkScene(scene, p) {
     else {
       if (boxText.text !== '第二幕 转折') errs.push('文本框内容不对：' + JSON.stringify(boxText.text))
       if (!/rgb\(142, 178, 252\)/.test(boxText.textColor)) errs.push('文本框没用角色色：' + boxText.textColor)
+      // 用户原话「文本框不要底」：文本框不许有底色，下面的矩形方框要透得上来。
+      if (!/rgba?\(0, 0, 0, 0\)|transparent/.test(boxText.bg)) errs.push('文本框有底色（用户要「不要底」，底下的色块该透出来）：' + boxText.bg)
       if (!boxText.grip || boxText.grip.w !== 16 || boxText.grip.h !== 16) errs.push('文本框的缩放手柄不是 16×16')
       else if (boxText.grip.cursor !== 'nwse-resize') errs.push('缩放手柄的光标不是 nwse-resize：' + boxText.grip.cursor)
     }
@@ -1456,6 +1469,10 @@ function checkScene(scene, p) {
     else {
       if (String(p.overlap.onText).indexOf('sc-obj') === -1) errs.push('文本框中心摸到的不是文本框：' + p.overlap.onText)
       if (String(p.overlap.onRect).indexOf('sc-objrect') === -1) errs.push('方框露出来的那条边摸到的不是方框：' + p.overlap.onRect)
+      // 层序最上面那一层是「其他所有卡片」：三层叠在一起的那一点，摸到的必须是卡片
+      if (String(p.overlap.onCardOver).indexOf('sc-card') === -1) {
+        errs.push('压在方框和文字上的那张卡不在最上面（摸到的是 ' + p.overlap.onCardOver + '，应当是 sc-card）')
+      }
     }
     // 卡片那条：时间单独一行、右下角有缩放手柄、对齐辅助线是 1px 细线
     const cb = p.cardBits

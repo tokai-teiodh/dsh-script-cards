@@ -2430,10 +2430,13 @@ function BoardView(props) {
         // 跟着整块画布一起平移缩放。
         edgeLabels,
         groupBgEl,
-        cardEls,
-        refEls,
+        // 层序（用户 2026-10-01 拍板，从下往上）：有颜色的方框 → 文字 → 其他所有卡片。
+        // 也就是说方框和文本框都垫在卡片**下面**，卡片永远压在最上面、点得到的也一定是卡片；
+        // 三层之间互不穿插（没有哪张卡会被压到文字底下）。DOM 顺序就是叠放顺序。
         rectEls,
         textEls,
+        cardEls,
+        refEls,
         ...guideEls,
         // 框选的框：画布坐标，跟着画布一起缩放；只画个虚线框，不挡任何点击
         marquee ? React.createElement('div', {

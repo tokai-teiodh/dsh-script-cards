@@ -116,12 +116,16 @@ const CSS = `
    它在 DOM 上排在卡片**后面**，所以得自己抬层级（5），否则被卡片盖住就看不见了。 */
 .sc-marquee{position:absolute;z-index:5;box-sizing:border-box;border:1px dashed var(--dsw-alias-brand-primary);background:rgba(127,127,127,.16);border-radius:2px;pointer-events:none}
 /* 画布上的独立对象：文本框（能写字）/ 矩形方框（**无内容**，只有底色）。
-   用户拍板：两个是独立对象、互不绑定；方框先画、文本框后画，所以文字压在色块上面。 */
+   用户拍板：两个是独立对象、互不绑定；层序从下往上是 方框 → 文字 → 其他所有卡片
+   （方框和文字垫在卡片下面，三层互不穿插）。叠放顺序由 85-boardview 的 DOM 顺序决定。 */
 .sc-obj{position:absolute;box-sizing:border-box;border-radius:10px;cursor:move;user-select:none}
 .sc-obj.on{box-shadow:0 0 0 2px var(--dsw-alias-brand-primary)}
 .sc-obj.dim{opacity:.45}
 .sc-objrect{background:color-mix(in srgb,var(--sc-accent,#7A8BA6) 55%,transparent);border:1px solid rgba(255,255,255,.10)}
-.sc-objtext{background:rgba(21,21,23,.72);border:1px dashed rgba(255,255,255,.18);padding:8px 10px;color:var(--dsw-alias-label-primary);white-space:pre-wrap;word-break:break-word;overflow:hidden;font-size:12.5px;line-height:1.5}
+/* 文本框**不要底**（用户：「文本框不要底」）：不填底色，下面的色块直接透上来，画出来就是
+   色块上浮着一层字。只留一圈淡虚线标出它占哪儿 —— 空文本框也得看得见、抓得到（它没有内容，
+   没边框就等于没了）。 */
+.sc-objtext{background:transparent;border:1px dashed rgba(255,255,255,.18);padding:8px 10px;color:var(--dsw-alias-label-primary);white-space:pre-wrap;word-break:break-word;overflow:hidden;font-size:12.5px;line-height:1.5}
 .sc-objtext.dye{color:var(--sc-accent)}
 .sc-objbody{width:100%;height:100%;overflow:hidden}
 .sc-objph{color:var(--dsw-alias-label-secondary);opacity:.7;font-size:12px}
