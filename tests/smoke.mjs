@@ -3190,6 +3190,137 @@ view.fire(view.find('sc-menuback'), 'onMouseDown', { target: {} })
 await tick()
 await tick()
 
+// ── AX. 改大小时吸附 · 辅助线只到下一张卡 · 分组入口 · 横排 ────────────────────
+// 用户 2026-10-01 真机反馈的四条：「拖动改变大小的时候也加一个对齐」「对齐的线不要太长，
+// 只要到下一个卡片就行，剩下的部分逐渐隐藏」「并没有看到你的分组功能出现在哪里，右键
+// 菜单没有」「自动排列，它只能竖着排，没法横着排」。
+console.log('\nAX. resize snapping, short guide lines, a grouping entry, horizontal arrange')
+
+// ① 改大小时也吸附：把右边缘拖到离另一张卡左边缘 3px 的地方，应该正好吸上
+clearSel()
+await tick()
+const axKeys = nativeKeys()
+const rsKey = axKeys[0]
+const rsOther = axKeys[1]
+const rs0 = cardRectOf(rsKey)
+const rsOtherRect = cardRectOf(rsOther)
+const wantW = rsOtherRect.x - rs0.x + 3
+const rsP = toClient(rs0.x + rs0.w, rs0.y + rs0.h)
+view.fire(gripOf(rsKey), 'onPointerDown', { button: 0, clientX: rsP.clientX, clientY: rsP.clientY })
+view.window('pointermove', { clientX: rsP.clientX + (wantW - rs0.w), clientY: rsP.clientY, buttons: 1 })
+await tick()
+eq(cardRectOf(rsKey).w, rsOtherRect.x - rs0.x, 'resizing snaps the right edge onto the next card')
+ok(view.findAll('sc-guide').length >= 1, 'and a guide shows up while resizing too')
+view.window('pointerup', { clientX: rsP.clientX + (wantW - rs0.w), clientY: rsP.clientY })
+await tick()
+await tick()
+
+// ② 辅助线别太长：只覆盖「被拖的那张 + 对齐到的那张」，不是铺满画布
+clearSel()
+await tick()
+const gA = nativeKeys()[0]
+const gB = nativeKeys()[1]
+const ga0 = cardRectOf(gA)
+const gb0 = cardRectOf(gB)
+const ags = toClient(ga0.x + 10, ga0.y + 10)
+const gTargetX = gb0.x + 3
+view.fire(cardNodeOf(gA), 'onPointerDown', { button: 0, clientX: ags.clientX, clientY: ags.clientY })
+view.window('pointermove', { clientX: ags.clientX + (gTargetX - ga0.x), clientY: ags.clientY, buttons: 1 })
+await tick()
+const guideEls = view.findAll('sc-guide')
+const vGuide = guideEls.filter((n) => String(n.props.className).indexOf('sc-guidev') !== -1)[0]
+const hGuide = guideEls.filter((n) => String(n.props.className).indexOf('sc-guideh') !== -1)[0]
+ok(!!(vGuide || hGuide), 'a guide is drawn while dragging')
+if (vGuide) {
+  const gs1 = Number(vGuide.props.style.top)
+  const gh = Number(vGuide.props.style.height)
+  const gaNow = cardRectOf(gA)
+  const gbNow = cardRectOf(gB)
+  ok(gh > 0 && gh < 1600, 'the guide stops at the two cards instead of crossing the whole canvas', [gs1, gh])
+  ok(gs1 <= Math.min(gaNow.y, gbNow.y) + 1 && gs1 + gh >= Math.max(gaNow.y + gaNow.h, gbNow.y + gbNow.h) - 1, 'and it still covers both cards', [gs1, gh, gaNow.y, gbNow.y])
+} else if (hGuide) {
+  const gx1 = Number(hGuide.props.style.left)
+  const gw = Number(hGuide.props.style.width)
+  const gaNow = cardRectOf(gA)
+  const gbNow = cardRectOf(gB)
+  ok(gw > 0 && gw < 1600, 'the guide stops at the two cards instead of crossing the whole canvas', [gx1, gw])
+  ok(gx1 <= Math.min(gaNow.x, gbNow.x) + 1 && gx1 + gw >= Math.max(gaNow.x + gaNow.w, gbNow.x + gbNow.w) - 1, 'and it still covers both cards', [gx1, gw])
+}
+view.window('pointerup', { clientX: ags.clientX + (gTargetX - ga0.x), clientY: ags.clientY })
+await tick()
+await tick()
+has(fs.readFileSync('src/10-css.js', 'utf8'), 'linear-gradient(to bottom,transparent', 'the guide fades out at both ends (source contract)')
+
+// ③ 分组的入口：单卡菜单里有（没选够时灰掉并写清怎么选），空白处菜单里也有
+clearSel()
+await tick()
+view.fire(cardNodeOf(gA), 'onContextMenu', { clientX: 300, clientY: 300 })
+await tick()
+const grpHint = pickItem('编成一组')
+ok(!!grpHint, 'the card menu mentions grouping now', view.text().slice(0, 80))
+ok(!!grpHint && grpHint.props.disabled === true, 'and greys it out until two cards are selected')
+view.fire(view.find('sc-menuback'), 'onMouseDown', { target: {} })
+await tick()
+view.fire(cardNodeOf(a1), 'onContextMenu', { shiftKey: true, clientX: 300, clientY: 300 })
+view.fire(cardNodeOf(a2), 'onContextMenu', { shiftKey: true, clientX: 340, clientY: 300 })
+await tick()
+// 选中两张后右键其中一张：走的是**批量菜单**（选中集合里的那一下右键），那一项是可点的
+view.fire(cardNodeOf(a1), 'onContextMenu', { clientX: 300, clientY: 300 })
+await tick()
+const grpNow = pickItem('编成一组')
+ok(!!grpNow && !grpNow.props.disabled, 'with two selected the menu can group them', view.textOf(grpNow || {}))
+view.click(grpNow)
+await tick()
+await tick()
+const gGrp = (JSON.parse(files[GRAPH]).groups || {})[CTX_G1] || []
+ok(gGrp.some((g) => g.keys.indexOf(a1) !== -1 && g.keys.indexOf(a2) !== -1), 'and it really writes a group')
+// 选中还在：右键**空白处**那条入口同样可点（空白处菜单不清选择）
+openBlank(700, 400)
+await tick()
+const grpEmpty = pickItem('把选中的 2 个编成一组')
+ok(!!grpEmpty && !grpEmpty.props.disabled, 'the empty-canvas menu can group the selection too')
+view.fire(view.find('sc-menuback'), 'onMouseDown', { target: {} })
+await tick()
+clearSel()
+await tick()
+
+// ④ 横排：同一层的两张卡左右并排（以前只能竖着排）
+const edgesNow = (JSON.parse(files[GRAPH]).edges || []).map((e) => e.from + '>' + e.to)
+const linkedPair = (x, y) => edgesNow.indexOf(x + '>' + y) !== -1 || edgesNow.indexOf(y + '>' + x) !== -1
+const hPool = nativeKeys()
+let hKeys = null
+for (let i = 0; i < hPool.length && !hKeys; i++) {
+  for (let j = i + 1; j < hPool.length; j++) {
+    if (!linkedPair(hPool[i], hPool[j])) { hKeys = [hPool[i], hPool[j]]; break }
+  }
+}
+ok(!!hKeys, 'found two cards with no line between them', hPool)
+clearSel()
+await tick()
+view.fire(cardNodeOf(hKeys[0]), 'onContextMenu', { shiftKey: true, clientX: 300, clientY: 300 })
+view.fire(cardNodeOf(hKeys[1]), 'onContextMenu', { shiftKey: true, clientX: 340, clientY: 300 })
+await tick()
+const hBtn = view.findAll('sc-btn').filter((n) => view.textOf(n).indexOf('横排') !== -1)[0]
+ok(!!hBtn, 'the status bar has a horizontal arrange button')
+view.click(hBtn)
+await tick()
+await tick()
+eq(cardRectOf(hKeys[0]).y, cardRectOf(hKeys[1]).y, 'horizontal arrange puts the two on the same row')
+ok(cardRectOf(hKeys[1]).x > cardRectOf(hKeys[0]).x, 'side by side, left to right', [cardRectOf(hKeys[0]).x, cardRectOf(hKeys[1]).x])
+// 竖排还是老样子：同一列、上下堆叠（两个方向真的不一样）
+view.click(arrangeBtn())
+await tick()
+await tick()
+eq(cardRectOf(hKeys[0]).x, cardRectOf(hKeys[1]).x, 'the vertical arrange stacks them in one column instead')
+ok(cardRectOf(hKeys[1]).y > cardRectOf(hKeys[0]).y, 'one above the other', [cardRectOf(hKeys[0]).y, cardRectOf(hKeys[1]).y])
+// 批量菜单里也有横排
+view.fire(cardNodeOf(hKeys[0]), 'onContextMenu', { clientX: 300, clientY: 300 })
+await tick()
+ok(!!pickItem('横排这 2 个'), 'the batch menu offers the horizontal arrange too')
+view.fire(view.find('sc-menuback'), 'onMouseDown', { target: {} })
+await tick()
+await tick()
+
 // ⑰ 源码契约：图谱读写两侧都要认得 objects / groups（少一处就是每次落盘都冲掉）
 const apiAV = fs.readFileSync('src/50-api.js', 'utf8')
 has(apiAV, 'objects: graph.objects', 'the graph writer serialises objects')

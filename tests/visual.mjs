@@ -435,8 +435,8 @@ function sceneMarkup(scene) {
       '<div class="sc-cardwhen sc-cardwhenline">第4天</div>' +
       '<div class="sc-cardsum">节点的简介</div>' +
       '<div class="sc-cardgrip"></div></div>'
-    // 拖动时的对齐辅助线：1px 细线，铺满画布
-    const guide = '<div class="sc-guide sc-guidev" data-guide="v" style="left:260px"></div>'
+    // 拖动时的对齐辅助线：只画到「和它对齐的那张卡片」为止（不是铺满画布）
+    const guide = '<div class="sc-guide sc-guidev" data-guide="v" style="left:260px;top:150px;height:220px"></div>'
     const boxRect = '<div class="sc-obj sc-objrect" data-key="obj/r1" data-obj="rect" style="left:60px;top:150px;width:220px;height:110px;--sc-accent:#3FA46A">' +
       '<div class="sc-objgrip"></div></div>'
     const boxText = '<div class="sc-obj sc-objtext dye" data-key="obj/t1" data-obj="text" style="left:80px;top:175px;width:200px;height:64px;--sc-accent:#8EB2FC">' +
@@ -928,7 +928,7 @@ window.__probeAll = function () {
       grip: grip
         ? { w: Math.round(grip.getBoundingClientRect().width), cursor: getComputedStyle(grip).cursor }
         : null,
-      guide: gd ? { w: Math.round(gd.getBoundingClientRect().width), pointer: gcs.pointerEvents } : null,
+      guide: gd ? { w: Math.round(gd.getBoundingClientRect().width), h: Math.round(gd.getBoundingClientRect().height), pointer: gcs.pointerEvents } : null,
     }
   })()
   out.bodyScroll = [document.documentElement.scrollWidth, window.innerWidth]
@@ -1291,6 +1291,7 @@ function checkScene(scene, p) {
       if (!cb.guide) errs.push('没找到对齐辅助线')
       else {
         if (cb.guide.w > 2) errs.push('对齐辅助线不是 1px 细线：' + cb.guide.w)
+        if (!(cb.guide.h >= 200 && cb.guide.h <= 240)) errs.push('对齐辅助线不是「只到下一张卡」那么长：' + cb.guide.h)
         if (cb.guide.pointer !== 'none') errs.push('对齐辅助线吃点击了：' + cb.guide.pointer)
       }
     }

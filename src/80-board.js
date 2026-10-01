@@ -139,12 +139,17 @@ function edgeMid(a, b) {
   return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }
 }
 
-// 自动排列：分层（最长路径）后逐层纵向铺开；L1 按章节序号，L2 按章节内顺序。
+// 自动排列：分层（最长路径）后逐层铺开；L1 按章节序号，L2 按章节内顺序。
 // slotOf(k) 给出「卡片多高、往上下各溢多少（选项列）、占多宽」。
 // 卡片一律摆在 out[k] = { x, y } 上，不做居中偏移 —— 卡片的位置只由卡片自己决定。
 // 选项列是溢出的，所以只影响**间距**：两张卡片之间要塞得下「上一张往下溢的那半」+
 // 「下一张往上溢的那半」+ 24px 的正常空隙。层与层之间按该层最宽的那块让开。
-function autoLayout(keys, slotOf_, edges) {
+//
+// dir 是排列方向（用户 2026-10-01 报的「它只能竖着排，没法横着排」）：
+//   'v'（默认）层往**右**推进，同一层的卡片**上下**堆叠 —— 原来的行为
+//   'h'        层往**下**推进，同一层的卡片**左右**并排
+// 两种方向都保持同一条规矩：卡片自己的坐标只由自己决定，选项列的溢出只算间距。
+function autoLayout(keys, slotOf_, edges, dir) {
   const index = {}
   keys.forEach(function (k, i) { index[k] = i })
   const indeg = {}
@@ -167,11 +172,31 @@ function autoLayout(keys, slotOf_, edges) {
     byDepth[d].push(k)
   })
   const out = {}
-  // 层与层之间的水平空隙（原来是写死的 260，等于「章节卡 208 + 52」）
+  // 层与层之间的空隙（原来是写死的 260，等于「章节卡 208 + 52」）
   const colGap = 52
   const gapY = 24
-  let x = 24
+  const gapX = 24
   const levels = Object.keys(byDepth).map(Number).sort(function (a, b) { return a - b })
+  if (dir === 'h') {
+    // 横排：每一层是一条**横排**，层与层往下走
+    let y = 24
+    for (const d of levels) {
+      const row = byDepth[d]
+      let x = 24
+      let tallest = 0
+      for (let i = 0; i < row.length; i++) {
+        const s = slotOf_(row[i])
+        out[row[i]] = { x: x, y: y }
+        x += s.w + gapX
+        // 这一层要多高：卡片自己的高 + 上下溢出的那两半都算进去
+        const full = s.h + s.over * 2
+        if (full > tallest) tallest = full
+      }
+      y += tallest + colGap
+    }
+    return out
+  }
+  let x = 24
   for (const d of levels) {
     const row = byDepth[d]
     let y = 24

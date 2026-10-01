@@ -168,11 +168,12 @@ const CSS = `
 /* 卡片右下角的缩放手柄（用户要的「可以修改卡片高度和宽度」）：与浮窗、独立对象同一个手势 */
 .sc-cardgrip{position:absolute;right:-4px;bottom:-4px;width:16px;height:16px;cursor:nwse-resize;border-radius:4px;background:var(--dsw-alias-brand-primary);opacity:0;z-index:3}
 .sc-card:hover .sc-cardgrip,.sc-card.on .sc-cardgrip{opacity:.7}
-/* 拖动时的对齐辅助线：跟着画布缩放，只画线、不吃点击。
-   竖线管左右对齐（左/中/右），横线管上下对齐，铺满整块画布（跟 .sc-dots 一样用 ±4000 撑开）。 */
-.sc-guide{position:absolute;z-index:4;background:var(--dsw-alias-brand-primary);opacity:.5;pointer-events:none}
-.sc-guidev{width:1px;top:-4000px;height:8000px}
-.sc-guideh{height:1px;left:-4000px;width:8000px}
+/* 拖动时的对齐辅助线：跟着画布缩放、只画线不吃点击。
+   线**只画到和它对齐的那张卡片**为止（用户：不要那么长，只要到下一个卡片就行），
+   两端用渐变淡出（用户：剩下的部分逐渐隐藏）。 */
+.sc-guide{position:absolute;z-index:4;pointer-events:none}
+.sc-guidev{width:1px;background:linear-gradient(to bottom,transparent,var(--dsw-alias-brand-primary) 14%,var(--dsw-alias-brand-primary) 86%,transparent)}
+.sc-guideh{height:1px;background:linear-gradient(to right,transparent,var(--dsw-alias-brand-primary) 14%,var(--dsw-alias-brand-primary) 86%,transparent)}
 /* 简介钉在卡片下沿：卡片改成竖版（宽 176/156/144、高 120/112/86）之后，标题和标签
    只占上半张，简介留在标题下面会有一大块空 —— auto 上边距把它压到下沿，
    跟方片页的方片是同一个观感。 */
