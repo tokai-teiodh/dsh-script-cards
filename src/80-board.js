@@ -410,6 +410,63 @@ function RefCard(props) {
   )
 }
 
+// ── 画布上的独立对象：文本框 / 矩形方框 ───────────────────────────────────────
+//
+// 用户拍板：「两个都是独立对象，而且并不互相绑定」—— 都在「右键空白处」的菜单里建。
+//   文本框：能写字（多行），双击就地编辑
+//   矩形方框：**无内容**，只有底色（用户原话「只可以改颜色」）
+// 它们不是卡片：没有文件、不连线、不参与自动排列；方框先画、文本框后画，所以文字
+// 压在色块上面（那个上下关系就是这么来的）。
+function ObjView(props) {
+  const rec = props.rec
+  const r = props.rect
+  const isRect = rec.kind === OBJ_RECT
+  const style = { left: r.x, top: r.y, width: r.w, height: r.h }
+  if (rec.color) style['--sc-accent'] = rec.color
+  const cls = [
+    'sc-obj', isRect ? 'sc-objrect' : 'sc-objtext',
+    !isRect && rec.color ? 'dye' : '',
+    props.selected ? 'on' : '',
+    props.dimmed ? 'dim' : '',
+  ].filter(Boolean).join(' ')
+
+  const kids = []
+  if (!isRect) {
+    if (props.editing) {
+      kids.push(React.createElement('textarea', {
+        key: 'ed', className: 'sc-objedit', value: props.editValue, autoFocus: true,
+        placeholder: '写点什么…（Esc 或点别处保存）',
+        // 输入框里的按键 / 鼠标事件一律不许冒到画布（Delete、Ctrl+A 是画布快捷键）
+        onPointerDown: function (e) { e.stopPropagation() },
+        onClick: function (e) { e.stopPropagation() },
+        onDoubleClick: function (e) { e.stopPropagation() },
+        onChange: function (e) { props.onEditChange(e.target.value) },
+        onBlur: function () { props.onEditCommit() },
+        onKeyDown: function (e) {
+          e.stopPropagation()
+          if (e.key === 'Escape') props.onEditCommit()
+        },
+      }))
+    } else {
+      kids.push(React.createElement('div', { key: 't', className: 'sc-objbody' },
+        rec.text ? rec.text : React.createElement('span', { className: 'sc-objph' }, '双击写点字')))
+    }
+  }
+  kids.push(React.createElement('div', {
+    key: 'g', className: 'sc-objgrip', title: '拖这里改大小',
+    onPointerDown: function (e) { props.onGripDown(e, props.objId) },
+  }))
+
+  return React.createElement('div', {
+    className: cls, style: style,
+    'data-key': props.cardKey, 'data-obj': rec.kind,
+    title: isRect ? '矩形方框：右键改颜色，拉右下角改大小' : '文本框：双击改字，右键改颜色',
+    onPointerDown: function (e) { props.onObjDown(e, props.objId) },
+    onDoubleClick: function (e) { e.stopPropagation(); props.onObjDouble(props.objId) },
+    onContextMenu: function (e) { e.preventDefault(); e.stopPropagation(); props.onMenu(e, props.objId) },
+  }, kids)
+}
+
 function Dock(props) {
   const items = props.items
   return React.createElement('div', { className: 'sc-dock' },

@@ -116,7 +116,147 @@ function speakerList(cards) {
 // ── 结构图谱 ──────────────────────────────────────────────────────────────────
 
 function emptyGraph() {
-  return { version: 1, chapters: [], nodes: {}, edges: [], refs: {} }
+  return { version: 1, chapters: [], nodes: {}, edges: [], refs: {}, objects: {}, groups: {} }
+}
+
+// ── 画布上的「独立对象」：文本框 / 矩形方框 ──────────────────────────────────
+//
+// 用户拍板：「两个都是独立对象，而且并不互相绑定」—— 它们不是卡片（没有文件、不动
+// 档案目录、不连线、不参与自动排列），只是摆在画布上的一块东西。位置与属性只写
+// `分支.json` 的 `objects[ctx][id]`，跟引用卡一样按画布分开存。
+//   文本框：能写字（多行），双击就地编辑
+//   矩形方框：**无内容**，只有底色（用户原话「只可以改颜色」）
+// 两类都能拖、能缩放、能框选、能染色、能编组。
+const OBJ_TEXT = 'text'
+const OBJ_RECT = 'rect'
+const OBJ_DEFAULT = { text: { w: 200, h: 64 }, rect: { w: 220, h: 110 } }
+const OBJ_MIN_W = 60
+const OBJ_MIN_H = 32
+
+function objKey(id) { return 'obj/' + id }
+function isObjKey(k) { return typeof k === 'string' && k.indexOf('obj/') === 0 }
+function objIdOf(k) { return isObjKey(k) ? k.slice(4) : '' }
+function objKindLabel(kind) { return kind === OBJ_RECT ? '矩形方框' : '文本框' }
+
+function normObjects(raw) {
+  const out = {}
+  if (!raw || typeof raw !== 'object') return out
+  for (const ctx of Object.keys(raw)) {
+    const one = raw[ctx]
+    if (!ctx || !one || typeof one !== 'object') continue
+    const list = {}
+    for (const id of Object.keys(one)) {
+      const v = one[id]
+      if (!id || !v || typeof v !== 'object') continue
+      const kind = v.kind === OBJ_RECT ? OBJ_RECT : (v.kind === OBJ_TEXT ? OBJ_TEXT : '')
+      if (!kind) continue
+      const x = Number(v.x)
+      const y = Number(v.y)
+      if (!isFinite(x) || !isFinite(y)) continue
+      const def = OBJ_DEFAULT[kind]
+      const w = Number(v.w)
+      const h = Number(v.h)
+      const rec = {
+        kind: kind,
+        x: Math.round(x),
+        y: Math.round(y),
+        w: isFinite(w) && w >= OBJ_MIN_W ? Math.round(w) : def.w,
+        h: isFinite(h) && h >= OBJ_MIN_H ? Math.round(h) : def.h,
+      }
+      // 只有文本框有内容；矩形方框「无内容」，多写的 text 字段直接丢掉
+      if (kind === OBJ_TEXT) rec.text = String(v.text == null ? '' : v.text)
+      const col = String(v.color == null ? '' : v.color).trim()
+      if (/^#[0-9a-fA-F]{3,8}$/.test(col)) rec.color = col
+      list[id] = rec
+    }
+    if (Object.keys(list).length) out[ctx] = list
+  }
+  return out
+}
+
+/** 某块画布上的独立对象表（没有就是空对象）。 */
+function objectsOf(graph, ctx) {
+  return (graph && graph.objects && graph.objects[ctx]) || {}
+}
+
+/** 生成一份**新的** objects 表：把 id 设成 rec（rec 传 null 表示删掉），空 ctx 自动去掉。 */
+function patchObjects(graph, ctx, id, rec) {
+  const out = {}
+  const old = (graph && graph.objects) || {}
+  for (const c of Object.keys(old)) out[c] = Object.assign({}, old[c])
+  if (!out[ctx]) out[ctx] = {}
+  if (rec) out[ctx][id] = rec
+  else {
+    delete out[ctx][id]
+    if (!Object.keys(out[ctx]).length) delete out[ctx]
+  }
+  return out
+}
+
+// ── 分组（用户拍板：逻辑分组，不是视觉框） ───────────────────────────────────
+//
+// 「在编为一组的卡片附近悬停时，底下会出现一层淡淡的背景，这个时候右键空白画布就可
+//   唤起整组，如果点击的是卡片本身，那就只进行卡片的逻辑。」
+// 所以组只记成员，不画框；组在**哪块画布**上算，跟引用卡同一套 ctx。
+// 组里少于两个人就自动散掉（归一化时就丢掉）。
+function normGroups(raw) {
+  const out = {}
+  if (!raw || typeof raw !== 'object') return out
+  for (const ctx of Object.keys(raw)) {
+    const one = raw[ctx]
+    if (!ctx || !Array.isArray(one)) continue
+    const kept = []
+    const seen = {}
+    for (const g of one) {
+      if (!g || typeof g !== 'object') continue
+      const keys = []
+      for (const k of (Array.isArray(g.keys) ? g.keys : [])) {
+        if (typeof k !== 'string' || !k || seen[k + '@' + String(g.id)]) continue
+        if (keys.indexOf(k) === -1) keys.push(k)
+      }
+      if (keys.length < 2) continue
+      kept.push({ id: String(g.id || uid('g')), keys: keys })
+    }
+    if (kept.length) out[ctx] = kept
+  }
+  return out
+}
+
+/** 某块画布上的分组表（数组；没有就是空数组）。 */
+function groupsOf(graph, ctx) {
+  const one = graph && graph.groups ? graph.groups[ctx] : null
+  return Array.isArray(one) ? one : []
+}
+
+/** 换掉某块画布上的整个分组表（list 为空就把这个 ctx 删掉）。 */
+function patchGroups(graph, ctx, list) {
+  const out = {}
+  const old = (graph && graph.groups) || {}
+  for (const c of Object.keys(old)) out[c] = old[c].slice()
+  if (list && list.length) out[ctx] = list.slice()
+  else delete out[ctx]
+  return out
+}
+
+/** 这个键属于哪个组（不属于任何组就返回 null）。 */
+function groupOfKey(groups, key) {
+  for (const g of groups || []) if (g.keys.indexOf(key) !== -1) return g
+  return null
+}
+
+/** 一张键的矩形（画布坐标）；独立对象与引用卡也在 rects 里，一样能算进组的包围盒。 */
+function groupBox(rects, keys) {
+  let x1 = null, y1 = null, x2 = null, y2 = null
+  for (const k of keys || []) {
+    const r = rects[k]
+    if (!r) continue
+    if (x1 === null || r.x < x1) x1 = r.x
+    if (y1 === null || r.y < y1) y1 = r.y
+    if (x2 === null || r.x + r.w > x2) x2 = r.x + r.w
+    if (y2 === null || r.y + r.h > y2) y2 = r.y + r.h
+  }
+  if (x1 === null) return null
+  return { x: x1, y: y1, w: x2 - x1, h: y2 - y1 }
 }
 
 function normGraph(raw) {
@@ -166,6 +306,8 @@ function normGraph(raw) {
   out.chapters = chapters
   out.edges = edges
   out.refs = normRefs(raw.refs)
+  out.objects = normObjects(raw.objects)
+  out.groups = normGroups(raw.groups)
   return out
 }
 
@@ -229,7 +371,7 @@ function patchRefs(graph, ctx, key, rec) {
   return out
 }
 
-/** 复制一份图谱（只改要改的那部分，refs 一起带上，别把引用冲掉）。 */
+/** 复制一份图谱（只改要改的那部分，refs / objects / groups 一起带上，别把别的东西冲掉）。 */
 function graphWith(graph, patch) {
   const out = {
     version: 1,
@@ -237,6 +379,8 @@ function graphWith(graph, patch) {
     nodes: Object.assign({}, graph.nodes || {}),
     edges: (graph.edges || []).slice(),
     refs: Object.assign({}, graph.refs || {}),
+    objects: Object.assign({}, graph.objects || {}),
+    groups: Object.assign({}, graph.groups || {}),
   }
   return patch ? Object.assign(out, patch) : out
 }
@@ -278,9 +422,34 @@ function pruneGraph(g, validKeys) {
     else if (Object.keys(one).length) changed = true
   }
   if (Object.keys(oldRefs).length !== Object.keys(refs).length) changed = true
+  // 画布上的独立对象：它们不属于任何卡片，原样带过去（空 ctx 不留）。
+  // 这一条是必须的 —— 面板侧有几处老代码手拼图谱字面量，pruneGraph 要是不认这些字段，
+  // 用户辛苦摆的文本框 / 方框、编好的组，会在下一次「改个字段」时整批消失。
+  const oldObjects = normObjects(g.objects)
+  const objects = {}
+  for (const c of Object.keys(oldObjects)) {
+    if (Object.keys(oldObjects[c]).length) objects[c] = oldObjects[c]
+  }
+  if (Object.keys(oldObjects).length !== Object.keys(objects).length) changed = true
+  // 分组：成员跟着卡片走。卡片被删了、对象被删了就出组；剩不到两个人，组自己散掉。
+  const objAlive = {}
+  for (const c of Object.keys(objects)) for (const id of Object.keys(objects[c])) objAlive[objKey(id)] = true
+  const oldGroups = normGroups(g.groups)
+  const groups = {}
+  for (const c of Object.keys(oldGroups)) {
+    const kept = []
+    for (const gr of oldGroups[c]) {
+      const ks = gr.keys.filter(function (k) { return validKeys[k] === true || objAlive[k] === true })
+      if (ks.length !== gr.keys.length) changed = true
+      if (ks.length >= 2) kept.push({ id: gr.id, keys: ks })
+      else changed = true
+    }
+    if (kept.length) groups[c] = kept
+    else if (oldGroups[c].length) changed = true
+  }
   // 「没变化就返回原对象」这条不能破：95-panel 靠 pruned !== fallback 决定要不要回写
   if (!changed) return g
-  return { version: 1, chapters: chapters, nodes: nodes, edges: edges, refs: refs }
+  return { version: 1, chapters: chapters, nodes: nodes, edges: edges, refs: refs, objects: objects, groups: groups }
 }
 
 // 章节的顺序：先按图谱里的 chapters 显式顺序，其余按序号（G1.1 < G1.2）再按标题。

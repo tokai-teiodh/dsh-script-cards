@@ -115,6 +115,23 @@ const CSS = `
 /* 框选的框：画布坐标、跟着画布一起缩放，只画一条虚线 + 一层极淡的底，不挡任何点击。
    它在 DOM 上排在卡片**后面**，所以得自己抬层级（5），否则被卡片盖住就看不见了。 */
 .sc-marquee{position:absolute;z-index:5;box-sizing:border-box;border:1px dashed var(--dsw-alias-brand-primary);background:rgba(127,127,127,.16);border-radius:2px;pointer-events:none}
+/* 画布上的独立对象：文本框（能写字）/ 矩形方框（**无内容**，只有底色）。
+   用户拍板：两个是独立对象、互不绑定；方框先画、文本框后画，所以文字压在色块上面。 */
+.sc-obj{position:absolute;box-sizing:border-box;border-radius:10px;cursor:move;user-select:none}
+.sc-obj.on{box-shadow:0 0 0 2px var(--dsw-alias-brand-primary)}
+.sc-obj.dim{opacity:.45}
+.sc-objrect{background:color-mix(in srgb,var(--sc-accent,#7A8BA6) 55%,transparent);border:1px solid rgba(255,255,255,.10)}
+.sc-objtext{background:rgba(21,21,23,.72);border:1px dashed rgba(255,255,255,.18);padding:8px 10px;color:var(--dsw-alias-label-primary);white-space:pre-wrap;word-break:break-word;overflow:hidden;font-size:12.5px;line-height:1.5}
+.sc-objtext.dye{color:var(--sc-accent)}
+.sc-objbody{width:100%;height:100%;overflow:hidden}
+.sc-objph{color:var(--dsw-alias-label-secondary);opacity:.7;font-size:12px}
+/* 缩放手柄：和浮窗右下角那个一样，指着或者选中时才明显 */
+.sc-objgrip{position:absolute;right:-4px;bottom:-4px;width:16px;height:16px;cursor:nwse-resize;border-radius:4px;background:var(--dsw-alias-brand-primary);opacity:0}
+.sc-obj:hover .sc-objgrip,.sc-obj.on .sc-objgrip{opacity:.7}
+.sc-objedit{position:absolute;inset:0;width:100%;height:100%;box-sizing:border-box;margin:0;padding:8px 10px;border:1px solid var(--dsw-alias-brand-primary);border-radius:10px;background:rgba(21,21,23,.94);color:var(--dsw-alias-label-primary);font-family:inherit;font-size:12.5px;line-height:1.5;resize:none;outline:none}
+/* 分组悬停时底下那层淡背景：只表示「这一片是一个组」，不吃点击 ——
+   右键那块**空白处**才算唤起整组，点卡片本身仍然只走单卡逻辑（用户拍板）。 */
+.sc-groupbg{position:absolute;z-index:0;border-radius:16px;background:rgba(127,127,127,.10);border:1px dashed rgba(127,127,127,.34);pointer-events:none}
 .sc-dots{position:absolute;left:-4000px;top:-4000px;width:8000px;height:8000px;pointer-events:none;background-image:radial-gradient(var(--dsw-alias-border-l1) 1px,transparent 1px);background-size:22px 22px;opacity:.7}
 .sc-edges{position:absolute;left:-4000px;top:-4000px;overflow:visible;pointer-events:none}
 /* 连线。颜色绝对不能用 --dsw-alias-border-l2：那是「描边级」的颜色，深色主题下算出来

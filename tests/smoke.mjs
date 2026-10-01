@@ -2743,6 +2743,299 @@ ok(cssAU.indexOf('.sc-drawerbody') === -1, 'the old inner scroll container is go
 view.click(view.findAll('sc-btn').filter((n) => view.textOf(n) === '存档卡')[0])
 await tick()
 
+// ── AV. 画布上的独立对象（文本框 / 矩形方框）· 逻辑分组 · shift+右键多选 ──────
+// 用户的原话：「添加一个功能分组，能够选取卡片，然后分组，能够对组内对象进行统一操作」
+// 「再添加一个shift加右键的多选，以前的框选要保留」「添加一个无依赖的文本框…右键创建」
+// 「添加一个无内容的矩形方框，只可以改颜色」。之后他明确了两条边界：文本框与方框是
+// **两个独立对象、互不绑定**；分组是**逻辑**的 —— 悬停出淡背景、右键那块空白处唤起
+// 整组、点卡片本身仍然只走单卡逻辑。
+console.log('\nAV. standalone objects, logical groups, shift+right-click multi-select')
+const CTX_G1 = G1
+// 读盘上那个独立对象（没写进去就返回 null —— 断言自己会红，别让测试崩在中途）
+const objOnDisk = (id) => ((((JSON.parse(files[GRAPH]).objects || {})[CTX_G1] || {})[id]) || null)
+// 回到上级再进去，别依赖前面几段留下的位置
+view.click(view.findAll('sc-navbtn').filter((n) => n.props.title === '回到上级')[0])
+await tick()
+view.click(view.findAll('sc-btn').filter((n) => view.textOf(n) === '归位')[0])
+await tick()
+view.fire(cardOf(G1), 'onDoubleClick', {})
+await tick()
+const nativeKeys = () => view.findAll('sc-card').filter((n) => !n.props['data-ref']).map((n) => n.props['data-key'])
+const l2keys = nativeKeys()
+ok(l2keys.indexOf(N1) !== -1 && l2keys.length >= 2, 'we are on the chapter level with cards to play with', l2keys)
+const PB = l2keys.filter((k) => k !== N1)[0]
+const gAV0 = JSON.parse(files[GRAPH])
+ok(!gAV0.objects || !Object.keys(gAV0.objects).length, 'the fixture graph starts without objects')
+ok(!gAV0.groups || !Object.keys(gAV0.groups).length, 'and without groups')
+
+const openBlank = (cx, cy) => {
+  const p = toClient(cx, cy)
+  view.fire(view.find('sc-canvas'), 'onPointerDown', { button: 2, clientX: p.clientX, clientY: p.clientY, target: blank })
+  view.fire(view.find('sc-canvas'), 'onContextMenu', { clientX: p.clientX, clientY: p.clientY, target: blank })
+  view.window('pointerup', { clientX: p.clientX, clientY: p.clientY })
+  return p
+}
+const pickItem = (needle) => view.findAll('sc-menuitem').filter((n) => view.textOf(n).indexOf(needle) !== -1)[0]
+const writesToGraph = () => writes.filter((w) => w.path === GRAPH).length
+const objNodes = (kind) => view.findAll('sc-obj').filter((n) => n.props['data-obj'] === kind)
+const objRect = (id) => {
+  const n = view.findAll('sc-obj').filter((x) => x.props['data-key'] === 'obj/' + id)[0]
+  return n ? { x: Number(n.props.style.left), y: Number(n.props.style.top), w: Number(n.props.style.width), h: Number(n.props.style.height) } : null
+}
+const selectedKeys = () => [].concat(view.findAll('sc-card'), view.findAll('sc-obj'))
+  .filter((n) => String(n.props.className).indexOf(' on') !== -1)
+  .map((n) => n.props['data-key'])
+const cardRectOf = (k) => {
+  const n = view.findAll('sc-card').filter((x) => x.props['data-key'] === k)[0]
+  return n ? { x: Number(n.props.style.left), y: Number(n.props.style.top), w: Number(n.props.style.width), h: Number(n.props.style.height) } : null
+}
+
+// ① 右键空白处：菜单里有「新建文本框 / 新建矩形方框」
+openBlank(780, 430)
+await tick()
+has(view.text(), '新建文本框', 'the empty-canvas menu can create a text box')
+has(view.text(), '新建矩形方框', 'and an empty rectangle')
+
+// ② 建文本框：写进 objects[ctx]、建完直接进编辑态、改完的字落盘
+const wText0 = writesToGraph()
+view.click(pickItem('新建文本框'))
+await tick()
+await tick()
+const textEl = objNodes('text')[0]
+ok(!!textEl, 'the text box lands on the canvas')
+const textId = String(textEl.props['data-key']).replace(/^obj\//, '')
+const textKey = 'obj/' + textId
+const textRec0 = (JSON.parse(files[GRAPH]).objects || {})[CTX_G1] || {}
+ok(!!textRec0[textId], 'the text box is written into 分支.json under this canvas')
+eq(textRec0[textId] && textRec0[textId].kind, 'text', 'with kind=text')
+eq(writesToGraph() - wText0, 1, 'creating it wrote the graph exactly once')
+const editArea = view.findMaybe('sc-objedit')
+ok(!!editArea, 'a brand-new text box opens its editor right away')
+view.fire(editArea, 'onChange', { target: { value: '第二幕 转折' } })
+await tick()
+// 重新取一次节点：onBlur 那个闭包要拿改完之后那一帧的（旧节点上还带着空值）
+view.fire(view.find('sc-objedit'), 'onBlur', {})
+await tick()
+await tick()
+eq((objOnDisk(textId) || {}).text, '第二幕 转折', 'the typed text is saved back')
+ok(view.text().indexOf('第二幕 转折') !== -1, 'and the canvas shows it')
+
+// ③ 建矩形方框：**无内容**、有默认底色，右键菜单里没有「编辑文字」
+openBlank(300, 430)
+await tick()
+view.click(pickItem('新建矩形方框'))
+await tick()
+await tick()
+const rectEl = objNodes('rect')[0]
+ok(!!rectEl, 'the rectangle lands on the canvas too')
+const rectId = String(rectEl.props['data-key']).replace(/^obj\//, '')
+const rectRec0 = objOnDisk(rectId) || {}
+eq(rectRec0.kind, 'rect', 'with kind=rect')
+ok(rectRec0.text === undefined, 'a rectangle carries no content at all', rectRec0.text)
+ok(/^#[0-9a-fA-F]{3,8}$/.test(String(rectRec0.color || '')), 'and it starts with a colour', rectRec0.color)
+view.fire(objNodes('rect')[0], 'onContextMenu', { clientX: 400, clientY: 300 })
+await tick()
+ok(!!view.findMaybe('sc-swatches'), 'its menu offers the colour swatches')
+ok(view.text().indexOf('编辑文字') === -1, 'and no text editing (it has no content)')
+const swatchAV = view.findAll('sc-swatch')[2]
+const swatchHex = String(swatchAV.props.style.background)
+view.click(swatchAV)
+await tick()
+await tick()
+eq((objOnDisk(rectId) || {}).color, swatchHex, 'picking a colour writes it')
+
+// ④ 拖动独立对象：跟手，松手只写一次
+const rp0 = objRect(rectId)
+const wMove0 = writesToGraph()
+const grab = toClient(rp0.x + 8, rp0.y + 8)
+view.fire(objNodes('rect')[0], 'onPointerDown', { button: 0, clientX: grab.clientX, clientY: grab.clientY })
+view.window('pointermove', { clientX: grab.clientX + 50, clientY: grab.clientY + 30, buttons: 1 })
+await tick()
+const rpMid = objRect(rectId)
+eq(rpMid.x - rp0.x, 50, 'the rectangle follows the pointer')
+eq(rpMid.y - rp0.y, 30, 'on both axes')
+view.window('pointerup', { clientX: grab.clientX + 50, clientY: grab.clientY + 30 })
+await tick()
+await tick()
+eq(writesToGraph() - wMove0, 1, 'the drag wrote the graph exactly once')
+eq((objOnDisk(rectId) || {}).x, rp0.x + 50, 'and the new spot is on disk')
+
+// ⑤ 右下角手柄缩放（和浮窗同一个手势）
+const wr0 = writesToGraph()
+const gp = toClient(rpMid.x + rpMid.w, rpMid.y + rpMid.h)
+view.fire(view.findAll('sc-objgrip')[0], 'onPointerDown', { button: 0, clientX: gp.clientX, clientY: gp.clientY })
+view.window('pointermove', { clientX: gp.clientX + 40, clientY: gp.clientY + 20, buttons: 1 })
+view.window('pointerup', { clientX: gp.clientX + 40, clientY: gp.clientY + 20 })
+await tick()
+await tick()
+const rpBig = objRect(rectId)
+eq(rpBig.w, rpMid.w + 40, 'the grip resizes the rectangle')
+eq(rpBig.h, rpMid.h + 20, 'on both axes')
+ok(writesToGraph() - wr0 >= 1, 'and the new size is written back')
+
+// ⑥ shift+右键＝切换选中、不弹菜单；不带 shift 的右键照旧弹菜单
+view.fire(cardOf(N1), 'onContextMenu', { clientX: 240, clientY: 220 })
+await tick()
+ok(!!view.findMaybe('sc-menu'), 'a plain right-click still opens the card menu')
+view.fire(view.find('sc-menuback'), 'onMouseDown', { target: {} })
+await tick()
+eq(view.findMaybe('sc-menu'), null, 'and clicking elsewhere closes it')
+view.fire(cardOf(N1), 'onContextMenu', { shiftKey: true, clientX: 240, clientY: 220 })
+await tick()
+eq(view.findMaybe('sc-menu'), null, 'shift+right-click does not open a menu')
+eq(selectedKeys().join(','), N1, 'it selects that card instead')
+view.fire(cardOf(PB), 'onContextMenu', { shiftKey: true, clientX: 300, clientY: 220 })
+await tick()
+eq(selectedKeys().slice().sort().join(','), [N1, PB].sort().join(','), 'the next shift+right-click adds to the selection')
+view.fire(cardOf(PB), 'onContextMenu', { shiftKey: true, clientX: 300, clientY: 220 })
+await tick()
+eq(selectedKeys().join(','), N1, 'and shift+right-click again takes it back out')
+
+// ⑦ 编成一组（在批量菜单里）
+view.fire(cardOf(PB), 'onContextMenu', { shiftKey: true, clientX: 300, clientY: 220 })
+await tick()
+eq(selectedKeys().length, 2, 'two cards are selected')
+const wGroup0 = writesToGraph()
+view.fire(cardOf(N1), 'onContextMenu', { clientX: 240, clientY: 220 })
+await tick()
+has(view.text(), '已选 2 张', 'right-clicking inside the selection gives the batch menu')
+view.click(pickItem('编成一组'))
+await tick()
+await tick()
+const gGroup = JSON.parse(files[GRAPH])
+ok(!!(gGroup.groups && gGroup.groups[CTX_G1] && gGroup.groups[CTX_G1].length === 1), 'the two cards are now a group in 分支.json')
+eq(gGroup.groups[CTX_G1][0].keys.slice().sort().join(','), [N1, PB].sort().join(','), 'and the group holds exactly those two')
+eq(writesToGraph() - wGroup0, 1, 'grouping wrote the graph once')
+
+// ⑧ 悬停在组的地盘上 → 底下浮出一层淡背景；移开就没了
+const b1 = cardRectOf(N1)
+const b2 = cardRectOf(PB)
+const bx = Math.min(b1.x, b2.x)
+const bb = Math.max(b1.y + b1.h, b2.y + b2.h)
+const hoverIn = toClient(bx - 6, bb - 6)
+view.window('pointermove', { clientX: hoverIn.clientX, clientY: hoverIn.clientY })
+await tick()
+const bgEl = view.findMaybe('sc-groupbg')
+ok(!!bgEl, 'hovering the group area floats a faint background under it')
+eq(Number(bgEl && bgEl.props.style.left), bx - 12, 'and it hugs the group')
+const away = toClient(20, 470)
+view.window('pointermove', { clientX: away.clientX, clientY: away.clientY })
+await tick()
+eq(view.findMaybe('sc-groupbg'), null, 'the background goes away when the pointer leaves')
+
+// ⑨ 右键组里的空白处 → 整组菜单
+openBlank(bx - 6, bb - 6)
+await tick()
+has(view.text(), '这一组 2 个', 'right-clicking the blank spot inside the group summons the whole group')
+ok(!!pickItem('整组复制一份') && !!pickItem('整组移出画布') && !!pickItem('取消编组'), 'the group menu can copy / clear / ungroup it')
+view.fire(view.find('sc-menuback'), 'onMouseDown', { target: {} })
+await tick()
+
+// ⑩ 拖动组里任何一张＝整组走（一次写回）
+const beforeG = { a: cardRectOf(N1), b: cardRectOf(PB) }
+const gw0 = writesToGraph()
+const gs = toClient(beforeG.a.x + 12, beforeG.a.y + 12)
+view.fire(cardOf(N1), 'onPointerDown', { button: 0, clientX: gs.clientX, clientY: gs.clientY })
+view.window('pointermove', { clientX: gs.clientX + 40, clientY: gs.clientY + 24, buttons: 1 })
+await tick()
+const midG = { a: cardRectOf(N1), b: cardRectOf(PB) }
+eq(midG.b.x - beforeG.b.x, 40, 'dragging one group member drags the other with it')
+eq(midG.b.y - beforeG.b.y, 24, 'on both axes')
+view.window('pointerup', { clientX: gs.clientX + 40, clientY: gs.clientY + 24 })
+await tick()
+await tick()
+eq(writesToGraph() - gw0, 1, 'the group drag wrote the graph once')
+const gMoved = JSON.parse(files[GRAPH])
+eq(gMoved.nodes[N1].cx, beforeG.a.x + 40, 'the member you grabbed was written back')
+eq(gMoved.nodes[PB].cx, beforeG.b.x + 40, 'and so was the rest of the group')
+
+// ⑪ 按住 Alt 只拖这一张（想把某一张拽出组时用）
+const solo0 = cardRectOf(PB)
+const other0 = cardRectOf(N1)
+const sp = toClient(solo0.x + 12, solo0.y + 12)
+view.fire(cardOf(PB), 'onPointerDown', { button: 0, altKey: true, clientX: sp.clientX, clientY: sp.clientY })
+view.window('pointermove', { clientX: sp.clientX + 30, clientY: sp.clientY, buttons: 1 })
+await tick()
+eq(cardRectOf(PB).x - solo0.x, 30, 'holding Alt drags only the card you grabbed')
+eq(cardRectOf(N1).x, other0.x, 'and leaves the rest of the group where it was')
+view.window('pointerup', { clientX: sp.clientX + 30, clientY: sp.clientY })
+await tick()
+await tick()
+
+// ⑫ 自动排列：整组当一块，组内相对位置不许被拆开
+const relBefore = (() => { const a = cardRectOf(N1); const b = cardRectOf(PB); return { dx: b.x - a.x, dy: b.y - a.y } })()
+view.click(view.findAll('sc-btn').filter((n) => view.textOf(n) === '自动排列')[0])
+await tick()
+await tick()
+const relAfter = (() => { const a = cardRectOf(N1); const b = cardRectOf(PB); return { dx: b.x - a.x, dy: b.y - a.y } })()
+eq(relAfter.dx, relBefore.dx, 'auto-arrange keeps the group internal offsets (x)')
+eq(relAfter.dy, relBefore.dy, 'and (y)')
+ok(!!(JSON.parse(files[GRAPH]).groups || {})[CTX_G1], 'the group survives auto-arrange')
+
+// ⑬ 整组复制一份：卡片复制成新文件，副本自动编成新的一组
+const filesBefore = Object.keys(files).length
+const gb2 = (() => { const a = cardRectOf(N1); const b = cardRectOf(PB); return { x: Math.min(a.x, b.x), b: Math.max(a.y + a.h, b.y + b.h) } })()
+openBlank(gb2.x - 6, gb2.b - 6)
+await tick()
+view.click(pickItem('整组复制一份'))
+await tick()
+await tick()
+await tick()
+const gCopied = JSON.parse(files[GRAPH])
+const groupsNow = (gCopied.groups && gCopied.groups[CTX_G1]) || []
+eq(groupsNow.length, 2, 'copying a group makes a second group out of the copies')
+const copyGroup = groupsNow.filter((g) => g.keys.indexOf(N1) === -1)[0]
+ok(!!copyGroup && copyGroup.keys.length === 2, 'the copy has both members')
+ok(Object.keys(files).length > filesBefore, 'and the copied cards are real files')
+
+// ⑭ 别的写入不许把 objects / groups 冲掉（老代码手拼图谱字面量时的老毛病）
+// 拿一张**不在组里**的卡（刚复制出来的副本）来改色，顺便验证复制的卡片真的上了画布
+const spareKey = nativeKeys().filter((k) => k !== N1 && k !== PB)[0]
+ok(!!spareKey, 'the copied cards are on the canvas too', nativeKeys())
+view.fire(cardOf(spareKey), 'onContextMenu', { clientX: 520, clientY: 320 })
+await tick()
+view.click(view.findAll('sc-swatch')[0])
+await tick()
+await tick()
+const gKeep = JSON.parse(files[GRAPH])
+const keepObjs = (gKeep.objects && gKeep.objects[CTX_G1]) || {}
+ok(!!keepObjs[textId], 'an unrelated write keeps the text box')
+ok(!!keepObjs[rectId], 'and the rectangle')
+ok(!!(gKeep.groups && gKeep.groups[CTX_G1] && gKeep.groups[CTX_G1].length >= 2), 'and the groups')
+
+// ⑮ 旧的右键框选照旧（用户要求保留），而且现在也能框到独立对象
+view.fire(view.find('sc-canvas'), 'onPointerDown', { button: 2, clientX: toClient(0, 0).clientX, clientY: toClient(0, 0).clientY, target: blank })
+const mEnd = toClient(880, 470)
+view.window('pointermove', { clientX: mEnd.clientX, clientY: mEnd.clientY, buttons: 2 })
+await tick()
+view.window('pointerup', { clientX: mEnd.clientX, clientY: mEnd.clientY })
+await tick()
+const marqueeKeys = selectedKeys()
+ok(marqueeKeys.length >= 3, 'the old right-drag marquee still selects several things', marqueeKeys.length)
+ok(marqueeKeys.indexOf(textKey) !== -1, 'and it picks up standalone objects too', marqueeKeys)
+
+// ⑯ 独立对象移出画布＝直接删掉（它没有文件），并顺手清掉散架的组
+// 刚框选完的第一下右键会被吃掉（真实浏览器里 pointerup 之后紧跟的那次 contextmenu），
+// 所以要点两次 —— 第二次才真的弹菜单。
+view.fire(objNodes('text')[0], 'onContextMenu', { clientX: 400, clientY: 200 })
+await tick()
+view.fire(objNodes('text')[0], 'onContextMenu', { clientX: 400, clientY: 200 })
+await tick()
+view.click(pickItem('删除这个文本框'))
+await tick()
+await tick()
+eq(objNodes('text').length, 0, 'deleting an object takes it off the canvas')
+ok(!((JSON.parse(files[GRAPH]).objects || {})[CTX_G1] || {})[textId], 'and out of 分支.json')
+
+// ⑰ 源码契约：图谱读写两侧都要认得 objects / groups（少一处就是每次落盘都冲掉）
+const apiAV = fs.readFileSync('src/50-api.js', 'utf8')
+has(apiAV, 'objects: graph.objects', 'the graph writer serialises objects')
+has(apiAV, 'groups: graph.groups', 'and groups')
+const modelAV = fs.readFileSync('src/30-model.js', 'utf8')
+has(modelAV, 'out.objects = normObjects(raw.objects)', 'the graph reader normalises objects')
+has(modelAV, 'out.groups = normGroups(raw.groups)', 'and groups')
+has(fs.readFileSync('src/50-api.js', 'utf8'), 'objects: graph.objects || {}', 'and they survive a graph write through the bridge')
+
 // 替身自己的 hook 守卫也得是活的，否则「组件被当普通函数调用」这类崩溃在无头测试里
 // 永远看不见 —— 这正是它一路全绿的原因。放在最后跑：它会换掉全局 window。
 console.log('\nAD. the harness refuses a component whose hook count changes')

@@ -217,7 +217,7 @@ export function createHarness() {
           right: CANVAS.left + CANVAS.width, bottom: CANVAS.top + CANVAS.height,
         }
         node.rect = inner
-      } else if (/(^|\s)sc-card(\s|$)/.test(cls) || /(^|\s)sc-dockcard(\s|$)/.test(cls)) {
+      } else if (/(^|\s)sc-card(\s|$)/.test(cls) || /(^|\s)sc-dockcard(\s|$)/.test(cls) || /(^|\s)sc-obj(\s|$)/.test(cls)) {
         const st = props.style || {}
         const base = canvasRect || { left: 0, top: 0 }
         const l = Number(st.left) || 0

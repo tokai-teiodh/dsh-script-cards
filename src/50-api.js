@@ -435,6 +435,10 @@ function makeApi(ctx, wf) {
         edges: graph.edges,
         // 引用卡位置（顶层 refs）：空就写空表，别写出半截结构
         refs: graph.refs || {},
+        // 画布上的独立对象（文本框 / 矩形方框）与分组：同样空就写空表。
+        // 少写这两行 = 每次落盘都把用户摆的东西和编好的组冲掉。
+        objects: graph.objects || {},
+        groups: graph.groups || {},
       }, null, 2)
       await writeText(root, graphFile(root), text)
       return true

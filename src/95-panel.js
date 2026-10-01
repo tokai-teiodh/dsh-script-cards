@@ -15,7 +15,7 @@ function readGraphFallback(root) {
 function writeGraphFallback(root, graph) {
   try {
     const all = JSON.parse(window.localStorage.getItem(GRAPH_LS_KEY) || '{}')
-    all[root] = { version: 1, chapters: graph.chapters, nodes: graph.nodes, edges: graph.edges }
+    all[root] = graphWith(graph)
     window.localStorage.setItem(GRAPH_LS_KEY, JSON.stringify(all))
   } catch (e) { /* 忽略 */ }
 }
@@ -49,6 +49,18 @@ function CardsPanel(props) {
   const [dialog, setDialog] = React.useState(null)
   const [dirs, setDirs] = React.useState(function () { return normDirs(null) })
 
+  // 最新图谱的镜像。异步流程（画布上「整组复制一份」要等卡片复制完）不能拿点击那一刻
+  // 的旧闭包去写图谱 —— 那样会把中间刚写进去的节点记录冲掉。
+  const graphRef = React.useRef(graph)
+  graphRef.current = graph
+
+  /**
+   * 当前最新的图谱。异步流程（删卡片、复制、粘贴…）**不能**用点击那一刻的旧闭包：
+   * 比如「批量删除」里画布先移走了引用卡（写了一次），紧接着面板再按旧图谱写一次，
+   * 引用卡就会复活。凡是发生在 await 之后的读写，一律走这里。
+   */
+  function latestGraph() { return graphRef.current || graph }
+
   React.useEffect(function () {
     if (api && api.setSession) api.setSession(sessionId)
   }, [api, sessionId])
@@ -62,8 +74,7 @@ function CardsPanel(props) {
     return api.onBridgeChange(function () { bump(function (n) { return n + 1 }) })
   }, [api])
 
-  function pushNotice(n) {
-    if (!n) { setNotice(null); return }
+  function pushNotice(n) {    if (!n) { setNotice(null); return }
     setNotice(typeof n === 'string' ? { text: n, kind: 'error' } : n)
   }
 
@@ -204,10 +215,8 @@ function CardsPanel(props) {
     }).catch(function (e) { pushNotice('保存失败：' + msgOf(e)); if (done) done() })
   }
 
-  function patchGraphRec(key, fields) {
-    const next = {
-      version: 1, chapters: graph.chapters.slice(), nodes: Object.assign({}, graph.nodes), edges: graph.edges.slice(),
-    }
+  function patchGraphRec(key, fields) {    // graphWith：手拼字面量会把 refs / objects / groups 一起冲掉（老写法就是这个毛病）
+    const next = graphWith(latestGraph())
     const old = next.nodes[key] || { x: null, y: null, cx: null, cy: null, chapter: '', mode: '', color: '', choices: [] }
     next.nodes[key] = Object.assign({}, old, fields)
     saveGraph(next)
@@ -221,9 +230,7 @@ function CardsPanel(props) {
       setDialog(null)
       api.deleteCard(cwd, card.kind, card.file).then(function () {
         setCards(cards.filter(function (c) { return cardKey(c) !== cardKey(card) }))
-        const next = {
-          version: 1, chapters: graph.chapters.slice(), nodes: Object.assign({}, graph.nodes), edges: graph.edges.slice(),
-        }
+        const next = graphWith(latestGraph())
         delete next.nodes[cardKey(card)]
         next.chapters = next.chapters.filter(function (k) { return k !== cardKey(card) })
         next.edges = next.edges.filter(function (e) { return e.from !== cardKey(card) && e.to !== cardKey(card) })
@@ -270,10 +277,9 @@ function CardsPanel(props) {
       setDialog(null)
       Promise.all(list.map(function (c) { return api.deleteCard(cwd, c.kind, c.file) })).then(function () {
         setCards(cards.filter(function (c) { return !want[cardKey(c)] }))
-        const next = {
-          version: 1, chapters: graph.chapters.filter(function (k) { return !want[k] }),
-          nodes: Object.assign({}, graph.nodes), edges: graph.edges.slice(),
-        }
+        const next = graphWith(latestGraph(), {
+          chapters: graph.chapters.filter(function (k) { return !want[k] }),
+        })
         for (const k of Object.keys(want)) delete next.nodes[k]
         next.edges = next.edges.filter(function (e) { return !want[e.from] && !want[e.to] })
         saveGraph(next)
@@ -352,28 +358,41 @@ function CardsPanel(props) {
     }).catch(function (e) { pushNotice('写入失败：' + msgOf(e)) })
   }
 
+  /**
+   * 画布上「整组复制一份」的最后一步：把复制出来的成员编成新的一组。
+   * 这一步走面板而不是画布，是因为**只有面板手上的图谱是最新的** —— 复制出来的卡片
+   * 的节点记录是刚才那次 saveGraph 写进去的，画布那边还拿着点击那一刻的旧闭包。
+   */
+  function makeGroupFromCanvas(keys, ctx) {
+    if (!keys || keys.length < 2) return
+    const base = latestGraph()
+    const list = groupsOf(base, ctx).concat([{ id: uid('g'), keys: keys.slice() }])
+    // keep=keys：刚复制出来的卡片可能还没进这一帧的 cards，别被 prune 当孤儿剪掉
+    saveGraph(graphWith(base, { groups: patchGroups(base, ctx, list) }), keys)
+  }
+
   function newCardAt(type, point, chapterKey, mode) {
     const draft = { id: '', file: '(新卡片)', kind: 'card', type: type, title: '', code: '', when: '', order: null, summary: '', tags: [], body: '', chapter: chapterKey || '', mode: mode || '' }
     setDialog({ kind: 'edit', card: draft, isNew: true, point: point })
   }
 
-  function duplicateCard(card) {
+  // done(entry)：可选回调。画布上「整组复制一份」要拿到新卡片的键，才能把副本编成新的一组。
+  function duplicateCard(card, done) {
     const rec = nodeRec(graph, cardKey(card))
     api.createCard(cwd, {
       type: card.type, title: (card.title || '') + ' 副本', code: card.code, chapter: rec.chapter || card.chapter,
       mode: rec.mode || card.mode, when: card.when, order: card.order, summary: card.summary,
       tags: card.tags, color: card.color, body: card.body, source: '复制自 ' + card.file,
     }).then(function (entry) {
-      setCards(cards.concat([entry]))
+      setCards(function (list) { return list.concat([entry]) })
       const at = { x: (rec.x === null ? 40 : rec.x + 40), y: (rec.y === null ? 40 : rec.y + 40) }
       const key = cardKey(entry)
-      const next = {
-        version: 1, chapters: graph.chapters.slice(), nodes: Object.assign({}, graph.nodes), edges: graph.edges.slice(),
-      }
+      const next = graphWith(latestGraph())
       next.nodes[key] = { x: at.x, y: at.y, cx: at.x + 40, cy: at.y + 40, chapter: rec.chapter, mode: entry.mode, color: '', choices: [] }
       saveGraph(next, [key])
       pushNotice({ text: '已复制为 ' + entry.file, kind: 'info' })
-    }).catch(function (e) { pushNotice('复制失败：' + msgOf(e)) })
+      if (done) done(entry)
+    }).catch(function (e) { pushNotice('复制失败：' + msgOf(e)); if (done) done(null) })
   }
 
   // ── 渲染 ───────────────────────────────────────────────────────────────────
@@ -454,6 +473,8 @@ function CardsPanel(props) {
       onDeleteCard: deleteCard,
       onDeleteCards: deleteCards,
       onDuplicate: duplicateCard,
+      // 画布上「整组复制一份」的最后一步（见 makeGroupFromCanvas）
+      onMakeGroup: makeGroupFromCanvas,
       onRetype: retype,
       onNewCard: newCardAt,
       onPasteCopy: function (card, point) {
@@ -464,11 +485,9 @@ function CardsPanel(props) {
           mode: rec.mode || card.mode, when: card.when, order: card.order, summary: card.summary,
           tags: card.tags, color: card.color, body: card.body, source: '粘贴自 ' + card.file,
         }).then(function (entry) {
-          setCards(cards.concat([entry]))
+          setCards(function (list) { return list.concat([entry]) })
           const key = cardKey(entry)
-          const next = {
-            version: 1, chapters: graph.chapters.slice(), nodes: Object.assign({}, graph.nodes), edges: graph.edges.slice(),
-          }
+          const next = graphWith(latestGraph())
           next.nodes[key] = { x: Math.round(at.x), y: Math.round(at.y), cx: Math.round(at.x), cy: Math.round(at.y), chapter: rec.chapter, mode: entry.mode, color: '', choices: [] }
           saveGraph(next, [key])
         }).catch(function (e) { pushNotice('粘贴失败：' + msgOf(e)) })
@@ -476,13 +495,12 @@ function CardsPanel(props) {
       // 连线的名字直接在线上改（画布上浮出一个输入框），不走对话框：
       // 弹个框挡在中间，既和展开的卡片宽度对不上，又平白多一层。
       onSetEdgeLabel: function (e, label) {
-        const next = {
-          version: 1, chapters: graph.chapters.slice(), nodes: Object.assign({}, graph.nodes),
+        const next = graphWith(latestGraph(), {
           edges: graph.edges.map(function (x) {
             return (x.from === e.from && x.to === e.to && String(x.choice || '') === String(e.choice || ''))
               ? Object.assign({}, x, { label: label }) : x
           }),
-        }
+        })
         saveGraph(next)
       },
       onEditChoices: function (card) {
@@ -526,12 +544,10 @@ function CardsPanel(props) {
             chapter: fields.chapter, mode: fields.mode, when: fields.when, order: fields.order,
             summary: fields.summary, tags: fields.tags, body: fields.body,
           }).then(function (entry) {
-            setCards(cards.concat([entry]))
+            setCards(function (list) { return list.concat([entry]) })
             if (dialog.point) {
               const key = cardKey(entry)
-              const next = {
-                version: 1, chapters: graph.chapters.slice(), nodes: Object.assign({}, graph.nodes), edges: graph.edges.slice(),
-              }
+              const next = graphWith(latestGraph())
               const rec = nodeRec(graph, key)
               next.nodes[key] = Object.assign({}, rec, {
                 x: Math.round(dialog.point.x), y: Math.round(dialog.point.y),

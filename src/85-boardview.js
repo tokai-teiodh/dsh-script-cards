@@ -54,6 +54,17 @@ function BoardView(props) {
   // multi = 被框中的卡片键；marquee = 拖动中那个框（画布坐标）。
   const [multi, setMulti] = React.useState([])
   const [marquee, setMarquee] = React.useState(null)
+  // 分组（用户拍板：**逻辑**分组，不是视觉框）：在编为一组的卡片附近悬停时底下浮出一层
+  // 淡背景，这时候右键那块空白处唤起整组菜单；点卡片本身仍然只走单卡逻辑。
+  // hoverGroup 存组的 id（没悬停 = null）；hoverGroupRef 是它的镜像，避免每动一下鼠标
+  // 都 setState 一次。
+  const [hoverGroup, setHoverGroup] = React.useState(null)
+  const hoverGroupRef = React.useRef(null)
+  // 画布上的独立对象（文本框 / 矩形方框）：拖动 / 缩放中的那一份几何（渲染用它，松手才落盘）
+  const [objDrag, setObjDrag] = React.useState(null)
+  const objDragRef = React.useRef(null)
+  // 正在就地编辑的文本框：{ id, value }
+  const [objEdit, setObjEdit] = React.useState(null)
   // 存档卡抽屉：开合 + 筛选词
   const [drawer, setDrawer] = React.useState(false)
   const [drawerQ, setDrawerQ] = React.useState('')
@@ -93,6 +104,10 @@ function BoardView(props) {
   function liveRect(k) {
     const r = rects[k]
     if (!r) return r
+    // 正在拖 / 缩放的那个独立对象：按它当前的几何画（松手才写回图谱）
+    if (objDrag && isObjKey(k) && objDrag.id === objIdOf(k)) {
+      return { x: objDrag.rect.x, y: objDrag.rect.y, w: objDrag.rect.w, h: objDrag.rect.h, placed: true }
+    }
     if (drag && drag.pos && drag.pos[k]) return { x: drag.pos[k].x, y: drag.pos[k].y, w: r.w, h: r.h, placed: r.placed }
     if (drag && drag.key === k && !drag.pos) return { x: drag.x, y: drag.y, w: r.w, h: r.h, placed: r.placed }
     return r
@@ -132,6 +147,14 @@ function BoardView(props) {
   const refRecs = refsOf(graph, ctx)
   const refCards = Object.keys(refRecs).map(function (k) { return cardAny[k] }).filter(Boolean)
 
+  // 画布上的独立对象（文本框 / 矩形方框）：跟引用卡同一套 ctx（哪块画布），
+  // 但**不是卡片** —— 没有文件、不连线、不参与自动排列。
+  const objRecs = objectsOf(graph, ctx)
+  const objIds = Object.keys(objRecs)
+  // 分组：只记成员（用户拍板：逻辑分组，不画框）
+  const groups = groupsOf(graph, ctx)
+  const GROUP_PAD = 12
+
   const rects = {}
   scope.forEach(function (c) {
     const k = cardKey(c)
@@ -148,9 +171,19 @@ function BoardView(props) {
     const s = refSizeOf(c.type)
     rects[k] = { x: rec.x, y: rec.y, w: s.w, h: s.h, placed: true }
   })
+  // 独立对象也进 rects：拖动 / 框选 / 编组 / 整组拖动都按「键 → 矩形」干活。
+  objIds.forEach(function (id) {
+    const rec = objRecs[id]
+    rects[objKey(id)] = { x: rec.x, y: rec.y, w: rec.w, h: rec.h, placed: true, obj: true }
+  })
 
   const placed = scope.filter(function (c) { return rects[cardKey(c)].placed })
   const unplaced = scope.filter(function (c) { return !rects[cardKey(c)].placed })
+
+  /** 这一层所有能被选中 / 框选 / 整组操作的东西：卡片 + 引用卡 + 独立对象。 */
+  function selectableKeys() {
+    return placed.map(cardKey).concat(refCards.map(cardKey)).concat(objIds.map(objKey))
+  }
 
   const edges = graph.edges.filter(function (e) { return inScope[e.from] && inScope[e.to] })
 
@@ -164,7 +197,16 @@ function BoardView(props) {
     if (!keys || !keys.length) return
     const next = graphWith(graph)
     let refs = null
+    let objects = null
     for (const key of keys) {
+      // 独立对象：只改 objects[ctx] 里那一条（染色 / 改文字都走它）
+      if (isObjKey(key)) {
+        const id = objIdOf(key)
+        const old = objRecs[id]
+        if (!old) continue
+        objects = patchObjects(objects ? { objects: objects } : graph, ctx, id, Object.assign({}, old, fields))
+        continue
+      }
       // 引用卡：染色写进 refs[ctx][key].color，**不碰 nodes**
       if (refRecs[key]) {
         refs = patchRefs(refs ? { refs: refs } : graph, ctx, key, Object.assign({ x: refRecs[key].x, y: refRecs[key].y }, fields))
@@ -174,6 +216,7 @@ function BoardView(props) {
       next.nodes[key] = Object.assign({}, old, fields)
     }
     if (refs) next.refs = refs
+    if (objects) next.objects = objects
     props.onGraph(next)
   }
 
@@ -190,7 +233,16 @@ function BoardView(props) {
     if (!list || !list.length) return
     const next = graphWith(graph)
     let refs = null
+    let objects = null
     for (const it of list) {
+      // 独立对象：只把 x/y 写回 objects[ctx]
+      if (isObjKey(it.key)) {
+        const id = objIdOf(it.key)
+        const old = objRecs[id]
+        if (!old) continue
+        objects = patchObjects(objects ? { objects: objects } : graph, ctx, id, Object.assign({}, old, { x: it.x, y: it.y }))
+        continue
+      }
       if (refRecs[it.key]) {
         const rec = { x: it.x, y: it.y }
         if (refRecs[it.key].color) rec.color = refRecs[it.key].color
@@ -203,6 +255,7 @@ function BoardView(props) {
         : Object.assign({}, old, { cx: it.x, cy: it.y, chapter: here.key })
     }
     if (refs) next.refs = refs
+    if (objects) next.objects = objects
     props.onGraph(next)
   }
 
@@ -221,6 +274,304 @@ function BoardView(props) {
     let refs = graph.refs
     for (const k of keys) refs = patchRefs({ refs: refs }, ctx, k, null)
     props.onGraph(graphWith(graph, { refs: refs }))
+  }
+
+  // ── 画布上的独立对象（文本框 / 矩形方框） ──────────────────────────────────
+  //
+  // 用户拍板：「两个都是独立对象，而且并不互相绑定」—— 都在右键空白处的菜单里建。
+  // 它们不是卡片：没有文件、不改档案目录、不连线、也不参与自动排列；位置和属性只写
+  // 分支.json 的 objects[ctx]。拖 / 缩放 / 染色 / 框选 / 编组跟卡片共用同一套手势。
+  function addObject(kind) {
+    const id = uid('ob')
+    const def = OBJ_DEFAULT[kind] || OBJ_DEFAULT.text
+    const at = menuPoint.current || { x: 40, y: 40 }
+    const rec = { kind: kind, x: Math.round(at.x), y: Math.round(at.y), w: def.w, h: def.h }
+    if (kind === OBJ_TEXT) rec.text = ''
+    // 方框一出来就得有底色 —— 「只可以改颜色」的东西不能先是透明的
+    if (kind === OBJ_RECT) rec.color = (props.swatches && props.swatches[0]) || DEFAULT_SWATCHES[0]
+    props.onGraph(graphWith(graph, { objects: patchObjects(graph, ctx, id, rec) }))
+    setSel(objKey(id))
+    setMulti([])
+    // 文本框建完直接进编辑态：不然还得再双击一下才知道这里能写字
+    if (kind === OBJ_TEXT) setObjEdit({ id: id, value: '' })
+    props.onNotice({
+      text: '已新建' + objKindLabel(kind)
+        + (kind === OBJ_RECT ? '（右键它改颜色、拉右下角改大小）' : '（双击改字，右键改颜色）'),
+      kind: 'info',
+    })
+  }
+
+  /** 独立对象的几何（拖动 / 缩放松手时写回图谱）。 */
+  function patchObjRect(id, rect) {
+    const old = objRecs[id]
+    if (!old) return
+    const rec = Object.assign({}, old, {
+      x: Math.round(rect.x), y: Math.round(rect.y),
+      w: Math.max(OBJ_MIN_W, Math.round(rect.w)), h: Math.max(OBJ_MIN_H, Math.round(rect.h)),
+    })
+    props.onGraph(graphWith(graph, { objects: patchObjects(graph, ctx, id, rec) }))
+  }
+
+  /** 删掉几个独立对象（没有文件，删了就没了），顺带把散架的组收干净。 */
+  function dropObjs(ids) {
+    if (!ids || !ids.length) return
+    const gone = {}
+    let objects = graph.objects
+    for (const id of ids) {
+      gone[objKey(id)] = true
+      objects = patchObjects({ objects: objects }, ctx, id, null)
+    }
+    props.onGraph(graphWith(graph, { objects: objects, groups: patchGroups(graph, ctx, cleanGroups(groups, gone)) }))
+    setMulti([])
+    setSel(null)
+  }
+
+  /** 原地复制一个独立对象（往右下挪 24，别压在原件上）。 */
+  function copyObj(id) {
+    const old = objRecs[id]
+    if (!old) return
+    const nid = uid('ob')
+    props.onGraph(graphWith(graph, {
+      objects: patchObjects(graph, ctx, nid, Object.assign({}, old, { x: old.x + 24, y: old.y + 24 })),
+    }))
+    setSel(objKey(nid))
+    props.onNotice({ text: '已复制一个' + objKindLabel(old.kind), kind: 'info' })
+  }
+
+  function objMenuItems(id) {
+    const rec = objRecs[id] || {}
+    const items = [{ head: objKindLabel(rec.kind) }]
+    if (rec.kind === OBJ_TEXT) {
+      items.push({ key: 'ed', label: '编辑文字', onPick: function () { setObjEdit({ id: id, value: String(rec.text || '') }) } })
+    }
+    items.push({ head: '颜色' })
+    items.push({ key: 'color', colors: true })
+    items.push({ sep: true })
+    items.push({ key: 'dup', label: '复制一个', onPick: function () { copyObj(id) } })
+    items.push({
+      key: 'del', label: '删除这个' + objKindLabel(rec.kind), danger: true,
+      onPick: function () { dropObjs([id]) },
+    })
+    return items
+  }
+
+  function onObjDown(e, id) {
+    if (e.button !== 0) return
+    const k = objKey(id)
+    const rec = objRecs[id]
+    if (!rec) return
+    if (multi.length && multi.indexOf(k) === -1) setMulti([])
+    setSel(k)
+    const p = toCanvas(e.clientX, e.clientY)
+    objDragRef.current = {
+      id: id, mode: 'move', ox: p.x, oy: p.y, rx: rec.x, ry: rec.y, rw: rec.w, rh: rec.h,
+      moved: false, cur: { x: rec.x, y: rec.y, w: rec.w, h: rec.h },
+    }
+    if (e.currentTarget && typeof e.currentTarget.setPointerCapture === 'function' && e.pointerId !== undefined) {
+      try { e.currentTarget.setPointerCapture(e.pointerId) } catch (err) { /* 忽略 */ }
+    }
+  }
+
+  function onObjGripDown(e, id) {
+    if (e.button !== 0) return
+    if (e && typeof e.stopPropagation === 'function') e.stopPropagation()
+    const rec = objRecs[id]
+    if (!rec) return
+    setSel(objKey(id))
+    const p = toCanvas(e.clientX, e.clientY)
+    objDragRef.current = {
+      id: id, mode: 'resize', ox: p.x, oy: p.y, rx: rec.x, ry: rec.y, rw: rec.w, rh: rec.h,
+      moved: false, cur: { x: rec.x, y: rec.y, w: rec.w, h: rec.h },
+    }
+  }
+
+  function onObjMenu(e, id) {
+    setEdgeMenu(null)
+    if (justMarqueed.current) { justMarqueed.current = false; return }
+    // 跟卡片同一条规矩：shift+右键＝切换选中，不弹菜单
+    if (e && e.shiftKey) { toggleMulti(objKey(id)); return }
+    setSel(objKey(id))
+    setMulti([])
+    setMenu({ x: e.clientX, y: e.clientY, obj: id })
+  }
+
+  /** 双击文本框＝就地编辑（矩形方框没有内容，双击什么都不做）。 */
+  function onObjDouble(id) {
+    const rec = objRecs[id]
+    if (!rec || rec.kind !== OBJ_TEXT) return
+    setObjEdit({ id: id, value: String(rec.text || '') })
+  }
+
+  function commitObjEdit() {    if (!objEdit) return
+    const cur = objEdit
+    setObjEdit(null)
+    const rec = objRecs[cur.id]
+    if (!rec) return
+    if (String(rec.text || '') === String(cur.value)) return
+    patchMany([objKey(cur.id)], { text: cur.value })
+  }
+
+  // ── 分组（逻辑组） ─────────────────────────────────────────────────────────
+  //
+  // 用户拍板：组是**逻辑**的 —— 「在编为一组的卡片附近悬停时，底下会出现一层淡淡的
+  // 背景，这个时候右键空白画布就可唤起整组，如果点击的是卡片本身，那就只进行卡片的
+  // 逻辑」。所以组只记成员，不画框。
+  /** 摘掉 gone 里的成员；剩不到两个的组自动散掉（跟落盘时的归一化规则一致）。 */
+  function cleanGroups(list, gone) {
+    const out = []
+    for (const g of list || []) {
+      const keys = g.keys.filter(function (k) { return !(gone && gone[k]) })
+      if (keys.length >= 2) out.push({ id: g.id, keys: keys })
+    }
+    return out
+  }
+
+  function writeGroups(list) {
+    props.onGraph(graphWith(graph, { groups: patchGroups(graph, ctx, list) }))
+  }
+
+  function makeGroup(keys) {
+    if (!keys || keys.length < 2) return
+    const inNew = {}
+    keys.forEach(function (k) { inNew[k] = true })
+    // 一个键只在一个组里：已经被别的组收走的先摘出来
+    writeGroups(cleanGroups(groups, inNew).concat([{ id: uid('g'), keys: keys.slice() }]))
+    setMulti(keys.slice())
+    props.onNotice({
+      text: '已编成一组（' + keys.length + ' 个）：拖动组里任何一个＝整组走，右键组里的空白处出整组菜单',
+      kind: 'info',
+    })
+  }
+
+  function ungroup(gid) {
+    writeGroups(groups.filter(function (g) { return g.id !== gid }))
+    props.onNotice({ text: '已取消编组（成员都还在画布上）', kind: 'info' })
+  }
+
+  function groupBoxLive(keys) {
+    const live = {}
+    for (const k of keys || []) {
+      const r = liveRect(k) || rects[k]
+      if (r && r.placed) live[k] = r
+    }
+    return groupBox(live, keys)
+  }
+
+  /** 指针底下是哪个组：命中的组里取包围盒最小的那个（重叠时算最里层）。 */
+  function groupAt(p) {
+    let best = null
+    for (const g of groups) {
+      const box = groupBoxLive(g.keys)
+      if (!box) continue
+      if (p.x < box.x - GROUP_PAD || p.x > box.x + box.w + GROUP_PAD) continue
+      if (p.y < box.y - GROUP_PAD || p.y > box.y + box.h + GROUP_PAD) continue
+      const area = box.w * box.h
+      if (!best || area < best.area) best = { g: g, area: area }
+    }
+    return best ? best.g : null
+  }
+
+  /** 整组染色：成员各写各的色（引用卡写 refs，对象写 objects，卡片写 nodes）。 */
+  function groupColor(gid, v) {
+    const g = groups.filter(function (x) { return x.id === gid })[0]
+    if (g) patchMany(g.keys, { color: v })
+  }
+
+  function groupMenuItems(gid) {
+    const g = groups.filter(function (x) { return x.id === gid })[0]
+    if (!g) return emptyMenuItems()
+    const keys = g.keys.slice()
+    const objSel = keys.filter(function (k) { return isObjKey(k) })
+    const nativeSel = keys.filter(function (k) { return !isObjKey(k) && !refRecs[k] })
+    const items = [
+      { head: '这一组 ' + keys.length + ' 个（拖动其中任何一个＝整组走）' },
+      { key: 'sel', label: '选中这一组', onPick: function () { setMulti(keys) } },
+      { sep: true },
+      { head: '染色' },
+      { key: 'color', colors: true },
+      { sep: true },
+      { key: 'cp', label: '整组复制一份', onPick: function () { copyGroup(gid) } },
+      { key: 'out', label: '整组移出画布', hint: 'Delete', onPick: function () { removeManyFromCanvas(keys) } },
+    ]
+    if (nativeSel.length) {
+      items.push({
+        key: 'del', label: '删除这 ' + nativeSel.length + ' 张卡片文件…', danger: true,
+        onPick: function () { props.onDeleteCards(nativeSel) },
+      })
+    }
+    if (objSel.length) {
+      items.push({
+        key: 'delobj', label: '删除组里的 ' + objSel.length + ' 个对象', danger: true,
+        onPick: function () { dropObjs(objSel.map(objIdOf)) },
+      })
+    }
+    items.push({ sep: true })
+    items.push({ key: 'ungroup', label: '取消编组', onPick: function () { ungroup(gid) } })
+    return items
+  }
+
+  /**
+   * 整组复制一份：独立对象原地复制一条记录、卡片走「原地复制一张」（新文件）。
+   * 引用卡**没法复制** —— 同一张卡在这块画布上只有一条位置记录，复制没有意义，跳过。
+   * 复制出来的成员自动编成新的一组，所以要等卡片复制完再写组（那条走面板，见 finishGroupCopy）。
+   */
+  function copyGroup(gid) {
+    const g = groups.filter(function (x) { return x.id === gid })[0]
+    if (!g) return
+    const collected = []
+    const pending = []
+    let objects = null
+    for (const k of g.keys) {
+      if (isObjKey(k)) {
+        const id = objIdOf(k)
+        const old = objRecs[id]
+        if (!old) continue
+        const nid = uid('ob')
+        objects = patchObjects(objects ? { objects: objects } : graph, ctx, nid, Object.assign({}, old, { x: old.x + 24, y: old.y + 24 }))
+        collected.push(objKey(nid))
+        continue
+      }
+      if (refRecs[k]) continue
+      const card = cardAny[k]
+      if (card) pending.push(card)
+    }
+    if (objects) props.onGraph(graphWith(graph, { objects: objects }))
+    if (!pending.length) { finishGroupCopy(collected); return }
+    let left = pending.length
+    pending.forEach(function (card) {
+      props.onDuplicate(card, function (entry) {
+        if (entry) collected.push(cardKey(entry))
+        left -= 1
+        if (left === 0) finishGroupCopy(collected)
+      })
+    })
+  }
+
+  function finishGroupCopy(keys) {
+    if (!keys || keys.length < 2) {
+      props.onNotice({ text: '这一组里没有能复制的东西（引用卡不复制）', kind: 'error' })
+      return
+    }
+    // 交给面板写：它手上的图谱是最新的（新复制出来的卡片就在里面），
+    // 从这里拿旧闭包写会把刚复制出来的节点记录冲掉。
+    props.onMakeGroup(keys, ctx)
+    setMulti(keys.slice())
+  }
+
+  function membersOfGroup(k) {
+    const g = groupOfKey(groups, k)
+    return g ? g.keys.slice() : []
+  }
+
+  /** shift+右键：把这一张加进 / 移出当前选择（不弹菜单）。 */
+  function toggleMulti(k) {
+    const has = multi.indexOf(k) !== -1
+    const next = has ? multi.filter(function (x) { return x !== k }) : multi.concat([k])
+    setMulti(next)
+    // 加进选择时它就是「当前这张」；移出时别留着高亮（sel 也算选中），
+    // 不然看起来像是没去掉 —— 那就换到剩下最后一个成员上。
+    if (!has) setSel(k)
+    else if (sel === k) setSel(next.length ? next[next.length - 1] : null)
   }
 
   function addEdge(from, to, choice) {
@@ -572,7 +923,14 @@ function BoardView(props) {
     if (!r.placed) return
     const start = toCanvas(e.clientX, e.clientY)
     // 按在选中集合里的任何一张上，整组一起走 —— 框选之后最想要的批量操作就是这个。
-    const group = (multi.length > 1 && multi.indexOf(k) !== -1) ? multi.slice() : [k]
+    // 编过组的卡片同理：拖组里任何一个＝整组走（**按住 Alt 只拖这一张**，方便把它拽出组）。
+    const memberKeys = membersOfGroup(k)
+    // 按 Alt ＝只拖这一张（把某一张从组里拽出来用）；否则：选中集合 > 编好的组 > 单张
+    const group = e.altKey
+      ? [k]
+      : ((multi.length > 1 && multi.indexOf(k) !== -1)
+        ? multi.slice()
+        : ((memberKeys.length > 1) ? memberKeys : [k]))
     dragRef.current = { key: k, dx: start.x - r.x, dy: start.y - r.y, x: r.x, y: r.y, moved: false, group: group, pos: null }
     setDrag({ key: k, x: r.x, y: r.y, pos: null })
     if (e.currentTarget && typeof e.currentTarget.setPointerCapture === 'function' && e.pointerId !== undefined) {
@@ -620,6 +978,17 @@ function BoardView(props) {
       }
       return
     }
+    // 独立对象的拖动 / 缩放：几何只认 ref，松手才写回图谱
+    if (objDragRef.current) {
+      const d = objDragRef.current
+      const p = toCanvas(e.clientX, e.clientY)
+      if (Math.abs(p.x - d.ox) > 2 || Math.abs(p.y - d.oy) > 2) d.moved = true
+      d.cur = d.mode === 'resize'
+        ? { x: d.rx, y: d.ry, w: Math.max(OBJ_MIN_W, p.x - d.rx), h: Math.max(OBJ_MIN_H, p.y - d.ry) }
+        : { x: Math.round(d.rx + (p.x - d.ox)), y: Math.round(d.ry + (p.y - d.oy)), w: d.rw, h: d.rh }
+      setObjDrag({ id: d.id, rect: d.cur })
+      return
+    }
     if (dragRef.current) {
       const d = dragRef.current
       const p = toCanvas(e.clientX, e.clientY)
@@ -662,6 +1031,14 @@ function BoardView(props) {
       drawerRef.current.moved = true
       setGhost({ x: e.clientX, y: e.clientY, card: drawerRef.current.card, fromDrawer: true })
     }
+    // 什么都没在拖的时候：看指针底下是不是某个组的地盘，是就把那层淡背景浮出来。
+    // 「组的地盘」＝成员包围盒（外扩 GROUP_PAD），所以卡片本身那一下仍然只走单卡逻辑。
+    const box = canvasBox()
+    const inside = e.clientX >= box.left && e.clientX <= box.left + box.width
+      && e.clientY >= box.top && e.clientY <= box.top + box.height
+    const gh = inside ? groupAt(toCanvas(e.clientX, e.clientY)) : null
+    const gid = gh ? gh.id : null
+    if (gid !== hoverGroupRef.current) { hoverGroupRef.current = gid; setHoverGroup(gid) }
   }
 
   function upPointers(e) {
@@ -685,15 +1062,22 @@ function BoardView(props) {
       justMarqueed.current = true
       const box = { x: Math.min(m.ox, m.x), y: Math.min(m.oy, m.y), w: Math.abs(m.x - m.ox), h: Math.abs(m.y - m.oy) }
       const hit = []
-      // 引用卡也要能被框进来（用户拍板：批量框选能带上它）
-      scope.concat(refCards).forEach(function (c) {
-        const k = cardKey(c)
-        const r = rects[k]
-        if (!r || !r.placed) return
-        if (r.x < box.x + box.w && r.x + r.w > box.x && r.y < box.y + box.h && r.y + r.h > box.y) hit.push(k)
-      })
+      // 引用卡与独立对象也要能被框进来（卡片 + 引用 + 文本框/方框一起选）
+      const candidates = scope.map(cardKey).concat(refCards.map(cardKey)).concat(objIds.map(objKey))
+      for (const ck of candidates) {
+        const r = rects[ck]
+        if (!r || !r.placed) continue
+        if (r.x < box.x + box.w && r.x + r.w > box.x && r.y < box.y + box.h && r.y + r.h > box.y) hit.push(ck)
+      }
       setMulti(hit)
       if (hit.length) setSel(hit[0])
+      return
+    }
+    if (objDragRef.current) {
+      const d = objDragRef.current
+      objDragRef.current = null
+      setObjDrag(null)
+      if (d.moved) patchObjRect(d.id, d.cur)
       return
     }
     if (dragRef.current) {
@@ -966,14 +1350,75 @@ function BoardView(props) {
     const keys = scope.map(cardKey)
     const slots = {}
     scope.forEach(function (c) { slots[cardKey(c)] = slotOf(c, nodeRec(graph, cardKey(c))) })
-    const out = autoLayout(keys, function (k) { return slots[k] }, edges)
+
+    // 编过组的卡片在自动排列里**当一块**（用户拍板）：一个组算一个单元，成员之间的
+    // 相对位置原样保留；连线在单元这一层接起来，所以组内部的顺序不会被拆开。
+    const units = []
+    const unitOf = {}
+    const claimed = {}
+    for (const g of groups) {
+      const mem = g.keys.filter(function (k) { return keys.indexOf(k) !== -1 && rects[k] && rects[k].placed })
+      if (mem.length < 2) continue
+      mem.forEach(function (k) { claimed[k] = true })
+      units.push({ id: 'g:' + g.id, keys: mem })
+    }
+    keys.forEach(function (k) {
+      if (claimed[k]) return
+      units.push({ id: k, keys: [k] })
+    })
+    const boxes = {}
+    for (const u of units) {
+      if (u.keys.length === 1) {
+        // 单张卡片照旧：单元就是这张卡（选项列的溢出照老规矩算间距，卡片本身不动）
+        const k = u.keys[0]
+        const off = {}
+        off[k] = { x: 0, y: 0 }
+        boxes[u.id] = { off: off }
+        unitOf[k] = u.id
+        continue
+      }
+      // 组：锚点＝成员自己位置的最小值（**不含溢出**），单元尺寸从锚点量到最远的溢出边。
+      // 锚点用成员位置是为了「组里第一张卡摆在哪就是哪」—— 用溢出边当锚点会把整组推下去。
+      let x1 = null, y1 = null, x2 = null, y2 = null
+      const off = {}
+      for (const k of u.keys) {
+        const r = rects[k]
+        const b = slotBox(r, slots[k] || { w: r.w, h: r.h, over: 0 })
+        if (x1 === null || r.x < x1) x1 = r.x
+        if (y1 === null || r.y < y1) y1 = r.y
+        if (x2 === null || b.x + b.w > x2) x2 = b.x + b.w
+        if (y2 === null || b.y + b.h > y2) y2 = b.y + b.h
+        off[k] = { x: r.x - x1, y: r.y - y1 }
+        unitOf[k] = u.id
+      }
+      boxes[u.id] = { w: x2 - x1, h: y2 - y1, off: off }
+    }
+    const slotOfUnit = function (id) {
+      const u = units.filter(function (x) { return x.id === id })[0]
+      if (!u) return { w: 0, h: 0, over: 0 }
+      if (u.keys.length === 1) return slots[u.keys[0]] || { w: 0, h: 0, over: 0 }
+      // 组当一块：over 已经摊进 w/h 里了，别再让 layout 额外让一次
+      return { w: boxes[id].w, h: boxes[id].h, over: 0 }
+    }
+    const unitEdges = edges.map(function (e) {
+      return { from: unitOf[e.from], to: unitOf[e.to], label: '', choice: '' }
+    }).filter(function (e) { return e.from && e.to && e.from !== e.to })
+    const out = autoLayout(units.map(function (u) { return u.id }), slotOfUnit, unitEdges)
+
     const next = graphWith(graph)
-    for (const k of Object.keys(out)) {
-      const old = next.nodes[k] || { x: null, y: null, cx: null, cy: null, chapter: '', mode: '', color: '', choices: [] }
-      // 卡片就摆在 out 给的位置上：选项列是溢出的，不参与卡片自己的坐标
-      next.nodes[k] = level === 'root'
-        ? Object.assign({}, old, { x: out[k].x, y: out[k].y })
-        : Object.assign({}, old, { cx: out[k].x, cy: out[k].y, chapter: here.key })
+    for (const u of units) {
+      const o = out[u.id]
+      if (!o) continue
+      for (const k of u.keys) {
+        const off = boxes[u.id].off[k] || { x: 0, y: 0 }
+        const x = Math.round(o.x + off.x)
+        const y = Math.round(o.y + off.y)
+        const old = next.nodes[k] || { x: null, y: null, cx: null, cy: null, chapter: '', mode: '', color: '', choices: [] }
+        // 卡片就摆在算出来的位置上：选项列是溢出的，不参与卡片自己的坐标
+        next.nodes[k] = level === 'root'
+          ? Object.assign({}, old, { x: x, y: y })
+          : Object.assign({}, old, { cx: x, cy: y, chapter: here.key })
+      }
     }
     props.onGraph(next)
     setView({ x: 24, y: 20, s: view.s })
@@ -1035,11 +1480,13 @@ function BoardView(props) {
         else openExpand(cur)
         return
       }
-      if (matchKey(e, 'delete') && cur) {
+      if (matchKey(e, 'delete')) {
+        // 框选了一组就整组移出画布（文件不动）；选中的是独立对象就删对象；否则只动当前这张
+        if (multi.length > 1) { e.preventDefault(); removeManyFromCanvas(multi); return }
+        if (sel && isObjKey(sel)) { e.preventDefault(); dropObjs([objIdOf(sel)]); return }
+        if (!cur) return
         e.preventDefault()
-        // 框选了一组就整组移出画布（文件不动），否则只动当前这张
-        if (multi.length > 1) removeManyFromCanvas(multi)
-        else removeFromCanvas(cur)
+        removeFromCanvas(cur)
         return
       }
       if (matchKey(e, 'mod+0')) { e.preventDefault(); setView({ x: 24, y: 20, s: 1 }); return }
@@ -1050,7 +1497,7 @@ function BoardView(props) {
         else { setMenu(null); setMulti([]) }
         return
       }
-      if (matchKey(e, 'mod+a')) { e.preventDefault(); setMulti(placed.map(cardKey).concat(refCards.map(cardKey))); return }
+      if (matchKey(e, 'mod+a')) { e.preventDefault(); setMulti(selectableKeys()); return }
     }
     window.addEventListener('keydown', onKey)
     return function () { window.removeEventListener('keydown', onKey) }
@@ -1060,18 +1507,24 @@ function BoardView(props) {
     removeManyFromCanvas([cardKey(card)])
   }
 
-  /** 一次把多张卡片移出画布（文件不动）。同 placeMany：只写一次图谱。
-   *  引用卡只从 refs 里删掉那一条 —— **绝不删卡片文件、绝不删文档**。 */
+  /** 一次把多张卡片（以及独立对象）移出画布（卡片文件不动）。同 placeMany：只写一次图谱。
+   *  引用卡只从 refs 里删掉那一条 —— **绝不删卡片文件、绝不删文档**；
+   *  独立对象没有文件，移出画布就是把它删掉。 */
   function removeManyFromCanvas(keys) {
     if (!keys || !keys.length) return
     const set = {}
     const refKeys = []
-    keys.forEach(function (k) { set[k] = true; if (refRecs[k]) refKeys.push(k) })
+    const objGone = []
+    keys.forEach(function (k) {
+      set[k] = true
+      if (isObjKey(k)) objGone.push(objIdOf(k))
+      else if (refRecs[k]) refKeys.push(k)
+    })
     const next = graphWith(graph, {
       chapters: graph.chapters.filter(function (x) { return !set[x] }),
     })
     for (const k of keys) {
-      if (refRecs[k]) continue
+      if (isObjKey(k) || refRecs[k]) continue
       if (level === 'root') next.nodes[k] = Object.assign({}, next.nodes[k] || {}, { x: null, y: null })
       else next.nodes[k] = Object.assign({}, next.nodes[k] || {}, { cx: null, cy: null })
     }
@@ -1081,6 +1534,13 @@ function BoardView(props) {
       for (const k of refKeys) refs = patchRefs({ refs: refs }, ctx, k, null)
       next.refs = refs
     }
+    if (objGone.length) {
+      let objects = graph.objects
+      for (const id of objGone) objects = patchObjects({ objects: objects }, ctx, id, null)
+      next.objects = objects
+    }
+    // 组里少了人就收干净（剩不到两个的组自动散掉）
+    next.groups = patchGroups(graph, ctx, cleanGroups(groups, set))
     props.onGraph(next)
     setMulti([])
   }
@@ -1165,6 +1625,11 @@ function BoardView(props) {
       })
     }
     items.push({ sep: true })
+    // 画布上的独立对象（用户拍板：文本框与矩形方框**互不绑定**，各建各的）
+    items.push({ head: '文本框 / 方框（独立对象）' })
+    items.push({ key: 'new-text', label: '新建文本框', onPick: function () { addObject(OBJ_TEXT) } })
+    items.push({ key: 'new-rect', label: '新建矩形方框', onPick: function () { addObject(OBJ_RECT) } })
+    items.push({ sep: true })
     items.push({ head: '常用类型（新建时排最前）' })
     for (const t of types) {
       items.push({
@@ -1187,16 +1652,37 @@ function BoardView(props) {
   function batchMenuItems(keys) {
     const n = keys.length
     const refSel = keys.filter(function (k) { return !!refRecs[k] })
-    const nativeSel = keys.filter(function (k) { return !refRecs[k] })
+    const nativeSel = keys.filter(function (k) { return !refRecs[k] && !isObjKey(k) })
+    const objSel = keys.filter(function (k) { return isObjKey(k) })
+    // 选中的正好是同一个组的全体成员 → 给「取消编组」
+    let uniqGroup = null
+    for (const k of keys) {
+      const g = groupOfKey(groups, k)
+      if (!g) { uniqGroup = null; break }
+      if (uniqGroup && g.id !== uniqGroup) { uniqGroup = null; break }
+      uniqGroup = g.id
+    }
     const items = [
-      { head: '已选 ' + n + ' 张（右键拖框选）' },
-      { key: 'out', label: '移出画布', hint: 'Delete', onPick: function () { removeManyFromCanvas(keys) } },
-      { sep: true },
-      { head: '染色' },
-      { key: 'color', colors: true },
-      { sep: true },
-      { key: 'selectall', label: '选中这一层全部', onPick: function () { setMulti(placed.map(cardKey).concat(refCards.map(cardKey))) } },
+      { head: '已选 ' + n + ' 张（右键拖框选 · shift+右键加选）' },
     ]
+    if (n >= 2 && !uniqGroup) {
+      items.push({ key: 'grp', label: '编成一组（' + n + ' 个）', onPick: function () { makeGroup(keys) } })
+    }
+    if (uniqGroup) {
+      items.push({ key: 'ung', label: '取消编组', onPick: function () { ungroup(uniqGroup) } })
+    }
+    items.push({ key: 'out', label: '移出画布', hint: 'Delete', onPick: function () { removeManyFromCanvas(keys) } })
+    if (objSel.length) {
+      items.push({
+        key: 'delobj', label: '删除这 ' + objSel.length + ' 个对象', danger: true,
+        onPick: function () { dropObjs(objSel.map(objIdOf)) },
+      })
+    }
+    items.push({ sep: true })
+    items.push({ head: '染色' })
+    items.push({ key: 'color', colors: true })
+    items.push({ sep: true })
+    items.push({ key: 'selectall', label: '选中这一层全部', onPick: function () { setMulti(selectableKeys()) } })
     if (nativeSel.length) {
       items.push({
         key: 'del', label: '删除这 ' + nativeSel.length + ' 张卡片文件…', danger: true,
@@ -1227,6 +1713,9 @@ function BoardView(props) {
     const p = toCanvas(e.clientX, e.clientY)
     menuPoint.current = { x: Math.round(p.x), y: Math.round(p.y) }
     setEdgeMenu(null)
+    // 右键落在某个组的地盘上（是空白处，不是卡片上）→ 唤起**整组**菜单（用户拍板）
+    const g = groupAt(p)
+    if (g) { setMenu({ x: e.clientX, y: e.clientY, group: g.id }); return }
     setMenu({ x: e.clientX, y: e.clientY, card: null })
   }
 
@@ -1234,6 +1723,9 @@ function BoardView(props) {
     setEdgeMenu(null)
     if (justMarqueed.current) { justMarqueed.current = false; return }
     const k = cardKey(card)
+    // shift+右键＝把这一张加进 / 移出当前选择，**不弹菜单**（用户拍板）。
+    // 右键拖框选照旧；不带 shift 的右键也照旧弹菜单。
+    if (e && e.shiftKey) { toggleMulti(k); return }
     // 右键落在框选出来的那一组里 → 给批量菜单，别再只操作一张
     if (multi.length > 1 && multi.indexOf(k) !== -1) {
       setSel(k)
@@ -1388,6 +1880,45 @@ function BoardView(props) {
       onMenu: onCardMenu,
     })
   })
+
+  // 画布上的独立对象：矩形方框先画、文本框后画 —— 文本框压在方框上面（用户要的那个
+  // 上下关系），但两者**互不绑定**：谁都不跟着谁走。
+  function objElsOf(kind) {
+    return objIds.filter(function (id) { return objRecs[id].kind === kind }).map(function (id) {
+      const k = objKey(id)
+      const editing = !!(objEdit && objEdit.id === id)
+      return React.createElement(ObjView, {
+        key: k, objId: id, rec: objRecs[id], rect: liveRect(k) || rects[k], cardKey: k,
+        selected: sel === k || multi.indexOf(k) !== -1,
+        dimmed: scrimOn,
+        editing: editing,
+        editValue: editing ? String(objEdit.value == null ? '' : objEdit.value) : '',
+        onEditChange: function (v) { setObjEdit({ id: id, value: v }) },
+        onEditCommit: commitObjEdit,
+        onObjDouble: onObjDouble,
+        onObjDown: onObjDown,
+        onGripDown: onObjGripDown,
+        onMenu: onObjMenu,
+      })
+    })
+  }
+  const rectEls = objElsOf(OBJ_RECT)
+  const textEls = objElsOf(OBJ_TEXT)
+
+  // 分组：悬停在组的地盘上时，组底下浮出一层淡背景（用户拍板：不要把组画成框）。
+  // 这层只负责「让人看见这一片是一个组」，不吃点击 —— 右键那块空白处才算唤起整组。
+  const hoverG = hoverGroup ? groups.filter(function (g) { return g.id === hoverGroup })[0] : null
+  const hoverBox = hoverG ? groupBoxLive(hoverG.keys) : null
+  const groupBgEl = hoverBox
+    ? React.createElement('div', {
+      className: 'sc-groupbg',
+      'data-group': hoverG.id,
+      style: {
+        left: hoverBox.x - GROUP_PAD, top: hoverBox.y - GROUP_PAD,
+        width: hoverBox.w + GROUP_PAD * 2, height: hoverBox.h + GROUP_PAD * 2,
+      },
+    })
+    : null
 
   const crumb = level === 'root'
     ? [React.createElement('span', { key: 'r', className: 'sc-crumb cur' }, '剧本档案')]
@@ -1620,8 +2151,11 @@ function BoardView(props) {
         // 连线标签是 HTML（见上面的注释）：挂在 .sc-stage 里，画布坐标直接当 left/top 用，
         // 跟着整块画布一起平移缩放。
         edgeLabels,
+        groupBgEl,
         cardEls,
         refEls,
+        rectEls,
+        textEls,
         // 框选的框：画布坐标，跟着画布一起缩放；只画个虚线框，不挡任何点击
         marquee ? React.createElement('div', {
           className: 'sc-marquee',
@@ -1677,9 +2211,9 @@ function BoardView(props) {
         ? '上级：排列章节（双击章节卡片进入下级）'
         : '下级：排本章节的情节顺序（双击卡片展开）'),
       React.createElement('span', null, '· 空白处左键拖动平移 · 滚轮缩放（Shift/Alt+滚轮左右上下）'),
-      React.createElement('span', null, '· 右键空白处新建 / 粘贴'),
+      React.createElement('span', null, '· 右键空白处新建卡片 / 文本框 / 方框 · 粘贴'),
       React.createElement('span', null, '· 点连线给它起名字（右键改名 / 删线）'),
-      React.createElement('span', null, '· 右键拖框选多张（右键点一下仍是菜单 · Ctrl+A 全选）'),
+      React.createElement('span', null, '· 右键拖框选多张 · shift+右键点卡片加选 · Ctrl+A 全选'),
       React.createElement('span', { className: 'sp' }),
       React.createElement('button', {
         className: 'sc-btn', title: '按连线分层，同层再按时间排',
@@ -1714,6 +2248,24 @@ function BoardView(props) {
         onColorPick: function (v) { patchMany(menu.batch, { color: v }) },
         onClose: function () { setMenu(null) },
       })
+      : (menu.group
+        ? MenuList({
+          x: menu.x, y: menu.y, items: groupMenuItems(menu.group),
+          color: '',
+          swatches: props.swatches, onEditSwatches: props.onEditSwatches,
+          onColor: function (v) { groupColor(menu.group, v); setMenu(null) },
+          onColorPick: function (v) { groupColor(menu.group, v) },
+          onClose: function () { setMenu(null) },
+        })
+        : (menu.obj
+        ? MenuList({
+          x: menu.x, y: menu.y, items: objMenuItems(menu.obj),
+          color: String((objRecs[menu.obj] || {}).color || ''),
+          swatches: props.swatches, onEditSwatches: props.onEditSwatches,
+          onColor: function (v) { patchMany([objKey(menu.obj)], { color: v }); setMenu(null) },
+          onColorPick: function (v) { patchMany([objKey(menu.obj)], { color: v }) },
+          onClose: function () { setMenu(null) },
+        })
       : (menu.card
         ? (function () {
           // 引用卡有**自己那一套**菜单：只有 染色 + 从画布移开（不许出现删除卡片 / 连线项）
@@ -1737,6 +2289,6 @@ function BoardView(props) {
           swatches: props.swatches, onEditSwatches: props.onEditSwatches,
           onColor: function () {},
           onClose: function () { setMenu(null) },
-        }))) : null
+        }))))) : null
   )
 }

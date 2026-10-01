@@ -39,9 +39,9 @@ const PROBE = has('probe')
 //   pinned 钉住多开（两个浮窗同时开着）
 //   full   全屏遮罩模式（背景变暗、画布虚化）
 //   doc    展开态的「文档」页签（DocEditor：脏标记 / 已保存 / 路径 / 等宽输入框）
-const SCENES = ['canvas', 'float', 'pinned', 'full', 'doc', 'talk', 'grid', 'refs']
+const SCENES = ['canvas', 'float', 'pinned', 'full', 'doc', 'talk', 'grid', 'refs', 'objects']
 const SCENE = arg('scene', 'canvas')
-const WIN_SIZE = { canvas: [900, 700], float: [900, 700], pinned: [900, 720], full: [900, 700], doc: [1000, 780], talk: [1060, 780], grid: [900, 700], refs: [980, 620] }
+const WIN_SIZE = { canvas: [900, 700], float: [900, 700], pinned: [900, 720], full: [900, 700], doc: [1000, 780], talk: [1060, 780], grid: [900, 700], refs: [980, 620], objects: [900, 620] }
 const OUT = arg('out', '')
 
 // ── 兜底主题色（真值的快照；有 asar 就用 asar 里的） ──────────────────────────
@@ -422,6 +422,33 @@ function sceneMarkup(scene) {
       }) +
       '<div class="sc-status" style="position:absolute;left:0;right:0;bottom:0;z-index:50">' +
       '<span>上级：排列章节（双击章节卡片进入下级）</span><span class="sp"></span>' +
+      '<button class="sc-btn">自动排列</button></div>'
+  }
+  if (scene === 'objects') {
+    // 独立对象那一幕：一个矩形方框（半透明底色）+ 压在它上面的文本框（角色色 + 缩放手柄），
+    // 底下那层是分组悬停时浮出来的淡背景，右边一张原生卡用来比层级。
+    // DOM 顺序照 85-boardview 的真实渲染顺序：分组背景 → 卡片 → 方框 → 文本框。
+    const groupBg = '<div class="sc-groupbg" data-group="g1" style="left:40px;top:130px;width:320px;height:170px"></div>'
+    const nodeCard = '<div class="sc-card" data-key="card/node-n1.md" data-type="node" style="left:400px;top:150px;width:156px;height:112px">' +
+      '<div class="sc-cardrow"><span class="sc-cardname">节点一</span><span class="sc-cardwhen">第4天</span></div>' +
+      '<div class="sc-cardsum">节点的简介</div></div>'
+    const boxRect = '<div class="sc-obj sc-objrect" data-key="obj/r1" data-obj="rect" style="left:60px;top:150px;width:220px;height:110px;--sc-accent:#3FA46A">' +
+      '<div class="sc-objgrip"></div></div>'
+    const boxText = '<div class="sc-obj sc-objtext dye" data-key="obj/t1" data-obj="text" style="left:80px;top:175px;width:200px;height:64px;--sc-accent:#8EB2FC">' +
+      '<div class="sc-objbody">第二幕 转折</div><div class="sc-objgrip"></div></div>'
+    return '<div class="sc-nav" style="position:absolute;left:0;right:0;top:0;z-index:50">' +
+      '<button class="sc-navbtn">‹</button><button class="sc-navbtn">›</button>' +
+      '<button class="sc-navbtn">⌂</button><button class="sc-navbtn">⟳</button>' +
+      '<button class="sc-btn">存档卡</button>' +
+      '<div class="sc-addr"><span class="sc-crumb">剧本档案</span><span class="sc-crumbsep">/</span>' +
+      '<span class="sc-crumb cur">G1.1 章节甲</span></div>' +
+      '<span class="sc-boardtip">100%</span>' +
+      '</div>' +
+      '<div class="sc-stage" style="transform:translate(24px,64px) scale(1)">' +
+      '<div class="sc-dots"></div>' + groupBg + nodeCard + boxRect + boxText +
+      '</div>' +
+      '<div class="sc-status" style="position:absolute;left:0;right:0;bottom:0;z-index:50">' +
+      '<span>下级：排本章节的情节顺序（双击卡片展开）</span><span class="sp"></span>' +
       '<button class="sc-btn">自动排列</button></div>'
   }
   if (scene === 'grid') {
@@ -834,6 +861,52 @@ window.__probeAll = function () {
       })(),
     }
     : { open: false }
+  // 独立对象（文本框 / 矩形方框）与分组悬停时那层淡背景
+  out.objects = Array.prototype.map.call(document.querySelectorAll('.sc-obj'), function (el) {
+    const cs = getComputedStyle(el)
+    const body = el.querySelector('.sc-objbody')
+    const grip = el.querySelector('.sc-objgrip')
+    return {
+      key: el.getAttribute('data-key') || '',
+      kind: el.getAttribute('data-obj') || '',
+      accent: cs.getPropertyValue('--sc-accent').trim(),
+      bg: cs.backgroundColor,
+      borderStyle: cs.borderTopStyle,
+      text: body ? body.textContent : '',
+      textColor: body ? getComputedStyle(body).color : '',
+      grip: grip
+        ? {
+          w: Math.round(grip.getBoundingClientRect().width),
+          h: Math.round(grip.getBoundingClientRect().height),
+          cursor: getComputedStyle(grip).cursor,
+        }
+        : null,
+    }
+  })
+  out.groupBg = (function () {
+    const g = document.querySelector('.sc-groupbg')
+    if (!g) return null
+    const cs = getComputedStyle(g)
+    return {
+      bg: cs.backgroundColor,
+      borderStyle: cs.borderTopStyle,
+      pointerEvents: cs.pointerEvents,
+      z: cs.zIndex,
+    }
+  })()
+  // 谁压在谁上面：文本框的中心点摸到的应当是文本框（方框在它下面）；
+  // 方框露在文本框外面的那一条，摸到的应当是方框本身。
+  out.overlap = (function () {
+    const t = document.querySelector('.sc-objtext')
+    const r = document.querySelector('.sc-objrect')
+    if (!t || !r) return null
+    const tb = t.getBoundingClientRect()
+    const rb = r.getBoundingClientRect()
+    const onText = document.elementFromPoint(tb.left + tb.width / 2, tb.top + tb.height / 2)
+    const onRect = document.elementFromPoint(rb.left + 6, rb.top + rb.height - 6)
+    const clsOf = function (el) { return el ? String(el.className || '') : '' }
+    return { onText: clsOf(onText), onRect: clsOf(onRect) }
+  })()
   out.bodyScroll = [document.documentElement.scrollWidth, window.innerWidth]
   return out
 }
@@ -1148,6 +1221,39 @@ function checkScene(scene, p) {
       if (!p.drawer.heads.some((t) => /人物/.test(t))) errs.push('抽屉里没有存档卡那一组：' + JSON.stringify(p.drawer.heads))
       if (!p.drawer.heads.some((t) => /章节/.test(t))) errs.push('抽屉里没有「别的级别」那一组：' + JSON.stringify(p.drawer.heads))
       if (p.drawer.items < 5) errs.push('抽屉条目只有 ' + p.drawer.items + ' 个')
+    }
+    if (p.bodyScroll && p.bodyScroll[0] > p.bodyScroll[1]) errs.push('这一幕把页面撑出横向滚动条了')
+  }
+  if (scene === 'objects') {
+    // 独立对象：方框有半透明底色、文本框有内容且用角色色、两个都有缩放手柄；
+    // 分组背景不吃点击；文本框压在方框上面。
+    const objs = p.objects || []
+    if (objs.length !== 2) errs.push('独立对象有 ' + objs.length + ' 个，应当是 2 个（一个方框一个文本框）')
+    const boxRect = objs.filter((o) => o.kind === 'rect')[0]
+    const boxText = objs.filter((o) => o.kind === 'text')[0]
+    if (!boxRect) errs.push('没有找到矩形方框')
+    else {
+      if (/rgba?\(0, 0, 0, 0\)|transparent/.test(boxRect.bg)) errs.push('矩形方框没有底色（color-mix 没生效）：' + boxRect.bg)
+      if (boxRect.borderStyle !== 'solid') errs.push('矩形方框的边框不是实线：' + boxRect.borderStyle)
+      if (boxRect.text) errs.push('矩形方框里不该有内容：' + JSON.stringify(boxRect.text))
+    }
+    if (!boxText) errs.push('没有找到文本框')
+    else {
+      if (boxText.text !== '第二幕 转折') errs.push('文本框内容不对：' + JSON.stringify(boxText.text))
+      if (!/rgb\(142, 178, 252\)/.test(boxText.textColor)) errs.push('文本框没用角色色：' + boxText.textColor)
+      if (!boxText.grip || boxText.grip.w !== 16 || boxText.grip.h !== 16) errs.push('文本框的缩放手柄不是 16×16')
+      else if (boxText.grip.cursor !== 'nwse-resize') errs.push('缩放手柄的光标不是 nwse-resize：' + boxText.grip.cursor)
+    }
+    if (!p.groupBg) errs.push('没有找到分组那层淡背景')
+    else {
+      if (p.groupBg.pointerEvents !== 'none') errs.push('分组背景吃点击了（应当是 pointer-events:none）：' + p.groupBg.pointerEvents)
+      if (p.groupBg.borderStyle !== 'dashed') errs.push('分组背景不是虚线：' + p.groupBg.borderStyle)
+      if (/rgba?\(0, 0, 0, 0\)|transparent/.test(p.groupBg.bg)) errs.push('分组背景是透明的（看不见）：' + p.groupBg.bg)
+    }
+    if (!p.overlap) errs.push('没量到两个对象的层级')
+    else {
+      if (String(p.overlap.onText).indexOf('sc-obj') === -1) errs.push('文本框中心摸到的不是文本框：' + p.overlap.onText)
+      if (String(p.overlap.onRect).indexOf('sc-objrect') === -1) errs.push('方框露出来的那条边摸到的不是方框：' + p.overlap.onRect)
     }
     if (p.bodyScroll && p.bodyScroll[0] > p.bodyScroll[1]) errs.push('这一幕把页面撑出横向滚动条了')
   }
