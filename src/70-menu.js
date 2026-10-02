@@ -12,7 +12,13 @@ function MenuList(props) {
   return React.createElement('div', {
     className: props.className || 'sc-menu',
     style: style,
-    onContextMenu: function (e) { e.preventDefault(); e.stopPropagation() },
+    onContextMenu: function (e) {
+      e.preventDefault()
+      e.stopPropagation()
+      // 菜单自己也可以认「右键再来一下」这个手势（连线上那个菜单：右键双击＝直接删线，
+      // 见 85-boardview 的 edgeRightAgain）—— 第二下多半正好落在菜单上，所以这条不能少。
+      if (props.onContextRight && props.onContextRight(e) === true) return
+    },
     onMouseDown: function (e) { e.stopPropagation() },
   }, items.map(function (it, i) {
     if (!it) return null
@@ -119,6 +125,9 @@ function MenuBackdrop(props) {
       e.preventDefault()
       e.stopPropagation()
       if (insideMenu(e)) return
+      // 遮罩也能认「右键再来一下」：双击那条线时，第二下要是落在菜单外面（线的另一段），
+      // 由这里交给调用方判定（它会自己看时间窗和距离），认下来就不关菜单。
+      if (props.onContextRight && props.onContextRight(e) === true) return
       if (props.onClose) props.onClose()
     },
   })

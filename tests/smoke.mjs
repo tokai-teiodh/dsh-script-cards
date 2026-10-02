@@ -1043,8 +1043,17 @@ eq(yDuring.y, liveCard.props.style.top + Number(liveCard.props.style.height) / 2
 view.window('pointerup', { clientX: 260, clientY: 240 })
 await tick()
 const yAfter = edgeStartXY()
-eq(yAfter.x, yDuring.x, 'dropping it does not jump the line somewhere else')
-eq(yAfter.y, yDuring.y, 'nor vertically')
+// 松手时卡片可能被「不许重叠」那条规矩挪开一点点，所以这里比的是**卡片现在的位置** ——
+// 要验的是「线取的是卡片当前的矩形，不是图谱里那份旧坐标」，不是「卡片一定停在原地」。
+// （cardRectOf 这个助手在这一段之后才定义，这里就地读一次。）
+const yCardNode = cardNodeOf(N1)
+const yCard = {
+  x: Number(yCardNode.props.style.left), y: Number(yCardNode.props.style.top),
+  w: Number(yCardNode.props.style.width), h: Number(yCardNode.props.style.height),
+}
+eq(yAfter.x, yCard.x + yCard.w + 8, 'after the drop the line still starts at the right edge of where the card is')
+eq(yAfter.y, yCard.y + yCard.h / 2, 'and at its vertical middle')
+ok(yAfter.x !== yBefore.x || yAfter.y !== yBefore.y, 'and it did move away from where the card started', [yBefore, yAfter])
 
 // ── Z. auto-arrange leaves room for the option column ───────────────────────
 // 分歧卡片右边那列选项**也算它占的地方**（卡片宽 + 14 的间距 + 156 的列）。
@@ -2947,8 +2956,30 @@ await tick()
 await tick()
 eq(writesToGraph() - gw0, 1, 'the group drag wrote the graph once')
 const gMoved = JSON.parse(files[GRAPH])
-eq(gMoved.nodes[N1].cx, beforeG.a.x + 40, 'the member you grabbed was written back')
-eq(gMoved.nodes[PB].cx, beforeG.b.x + 40, 'and so was the rest of the group')
+// 松手时整组可能被「卡片不许重叠」那条规矩整体推开一点（推开只平移，不动组内相对位置），
+// 所以比的是「两张卡被挪了同样多」＋「组内间距没变」，而不是「正好 40」。
+const gdA = gMoved.nodes[N1].cx - beforeG.a.x
+const gdB = gMoved.nodes[PB].cx - beforeG.b.x
+const gdyA = gMoved.nodes[N1].cy - beforeG.a.y
+const gdyB = gMoved.nodes[PB].cy - beforeG.b.y
+eq(gdA, gdB, 'both members of the group were written back by the same amount', [gdA, gdB])
+eq(gdyA, gdyB, 'on y too', [gdyA, gdyB])
+eq(gMoved.nodes[PB].cx - gMoved.nodes[N1].cx, beforeG.b.x - beforeG.a.x, 'and the group kept its inner spacing')
+// 松手之后这一组不和别的卡片压着 —— 「卡片不许重叠」那条规矩（2026-10-02 拍板）在这里也生效
+const gRectOf = (k) => {
+  const n = cardNodeOf(k)
+  return { x: Number(n.props.style.left), y: Number(n.props.style.top), w: Number(n.props.style.width), h: Number(n.props.style.height) }
+}
+const gHits = view.findAll('sc-card')
+  .filter((n) => n.props['data-key'] !== N1 && n.props['data-key'] !== PB)
+  .filter((n) => {
+    const o = { x: Number(n.props.style.left), y: Number(n.props.style.top), w: Number(n.props.style.width), h: Number(n.props.style.height) }
+    return [N1, PB].some((k) => {
+      const m = gRectOf(k)
+      return m.x < o.x + o.w && m.x + m.w > o.x && m.y < o.y + o.h && m.y + m.h > o.y
+    })
+  })
+eq(gHits.length, 0, 'and after the drop the group overlaps no other card', gHits.map((n) => n.props['data-key']))
 
 // ⑪ 按住 Alt 只拖这一张（想把某一张拽出组时用）
 const solo0 = cardRectOf(PB)
@@ -3617,6 +3648,231 @@ inFileBA(miniTitleBA, '-webkit-line-clamp:2', 'the tile title is clamped to two 
 inFileBA(miniTitleBA, 'overflow:hidden', 'and whatever does not fit is clipped')
 inFileBA((cssBA.match(/\.sc-mini\{[^}]*\}/) || [''])[0], 'background:var(--dsw-alias-bg-layer-1)',
   'the thumbnail layer is opaque (nothing shows through from the canvas behind)')
+
+// ── BB. 卡片不许重叠（松手后自动让开）＋ 右键双击那条线＝删除 ────────────────────
+// 用户 2026-10-02 原话：「除了文本框，和颜色框之外的卡片，它不能重叠」「还有就是加一个右键
+// 双击连线…取消连线的快捷方式」。问下来的四条口径：拖动/改大小**松手后自动让开**（拖的过程中
+// 允许压着）、**原生卡＋引用卡**都算、手势加在**那条线**上、画布上已经压着的老卡片**先不动**。
+console.log('\nBB. cards never overlap (they step aside on release) and right-double-clicking a line deletes it')
+const G1K = 'card/chapter-g1.md'
+const G2K = 'card/chapter-g2.md'
+const boxOfBB = (n) => ({
+  x: Number(n.props.style.left), y: Number(n.props.style.top),
+  w: Number(n.props.style.width), h: Number(n.props.style.height),
+})
+const rectOfBB = (k) => {
+  const n = cardNodeOf(k)
+  return n ? boxOfBB(n) : null
+}
+const refRectOfBB = (k) => {
+  const n = view.findAll('sc-refcard').filter((x) => x.props['data-key'] === k)[0]
+  return n ? boxOfBB(n) : null
+}
+const overlapsBB = (a, b) => !!a && !!b && a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y
+const overlapPairsBB = () => {
+  const list = view.findAll('sc-card').map((n) => ({ key: n.props['data-key'], r: boxOfBB(n) }))
+  const bad = []
+  for (let i = 0; i < list.length; i++) {
+    for (let j = i + 1; j < list.length; j++) {
+      if (overlapsBB(list[i].r, list[j].r)) bad.push(list[i].key + ' × ' + list[j].key)
+    }
+  }
+  return bad
+}
+
+// 摆一个已知的顶层画布：两张章节卡（176×120），其余落位全撤掉
+const gBB = JSON.parse(files[GRAPH])
+for (const key of Object.keys(gBB.nodes || {})) {
+  delete gBB.nodes[key].x; delete gBB.nodes[key].y
+  delete gBB.nodes[key].cx; delete gBB.nodes[key].cy
+  delete gBB.nodes[key].w; delete gBB.nodes[key].h
+}
+gBB.nodes[G1K].x = 40; gBB.nodes[G1K].y = 40
+gBB.nodes[G2K].x = 400; gBB.nodes[G2K].y = 40
+gBB.objects = {}
+gBB.refs = {}
+files[GRAPH] = JSON.stringify(gBB, null, 2)
+view.click(refreshBA())
+await tick()
+await tick()
+// 视角归位：让「可见区」就是画布左上角那一块 —— ③ 那条「别把卡片推出可见范围」要靠它才确定
+view.click(view.findAll('sc-btn').filter((n) => view.textOf(n) === '归位')[0])
+await tick()
+eq(view.findAll('sc-card').length, 2, 'the top canvas holds exactly the two chapter cards', view.findAll('sc-card').map((n) => n.props['data-key']))
+eq(rectOfBB(G1K).w, 176, 'a chapter card is 176 wide here')
+eq(overlapPairsBB().length, 0, 'and they start out clear of each other')
+
+// ① 拖到邻居身上：拖的过程中允许压着，一松手挪到最近的空位（这里＝贴着邻居的左边）
+{
+  const a0 = rectOfBB(G1K)
+  const p0 = toClient(a0.x + 20, a0.y + 20)
+  const p1 = toClient(a0.x + 320, a0.y + 20)
+  view.fire(cardNodeOf(G1K), 'onPointerDown', { button: 0, clientX: p0.clientX, clientY: p0.clientY })
+  view.window('pointermove', { clientX: p1.clientX, clientY: p1.clientY, buttons: 1 })
+  await tick()
+  ok(overlapsBB(rectOfBB(G1K), rectOfBB(G2K)), 'while you drag it, it may sit on top of the other card', [rectOfBB(G1K), rectOfBB(G2K)])
+  view.window('pointerup', { clientX: p1.clientX, clientY: p1.clientY })
+  await tick()
+  await tick()
+  const a1 = rectOfBB(G1K)
+  eq(overlapsBB(a1, rectOfBB(G2K)), false, 'but on release it steps aside')
+  eq(a1.x, rectOfBB(G2K).x - a1.w, 'and lands flush against the neighbour it hit (the nearest free spot)')
+  eq(a1.y, a0.y, 'without wandering off in the other axis')
+  eq(overlapPairsBB().length, 0, 'no two cards overlap any more', overlapPairsBB())
+  eq(JSON.parse(files[GRAPH]).nodes[G1K].x, a1.x, 'and that spot is what got written to the graph')
+  eq(JSON.parse(files[GRAPH]).nodes[G1K].y, a1.y, 'on both axes')
+}
+
+// ② 文本框 / 方框不受这条约束：卡片可以压在它上面，它也不会被卡片推开
+{
+  openBlank(700, 400)
+  await tick()
+  view.click(pickItem('新建文本框'))
+  await tick()
+  await tick()
+  const edBB = view.findMaybe('sc-objedit')
+  if (edBB) { view.fire(edBB, 'onBlur', {}); await tick() }
+  const textId = String(objNodes('text')[0].props['data-key']).replace(/^obj\//, '')
+  const t0 = objRect(textId)
+  ok(!!t0, 'a text box is on the canvas', t0)
+  // 拖一张卡片压在文本框上
+  const a0 = rectOfBB(G1K)
+  const want = { x: Math.round(t0.x + t0.w / 2 - a0.w / 2), y: Math.round(t0.y + t0.h / 2 - a0.h / 2) }
+  const q0 = toClient(a0.x + 20, a0.y + 20)
+  const q1 = toClient(a0.x + 20 + (want.x - a0.x), a0.y + 20 + (want.y - a0.y))
+  view.fire(cardNodeOf(G1K), 'onPointerDown', { button: 0, clientX: q0.clientX, clientY: q0.clientY })
+  view.window('pointermove', { clientX: q1.clientX, clientY: q1.clientY, buttons: 1 })
+  view.window('pointerup', { clientX: q1.clientX, clientY: q1.clientY })
+  await tick()
+  await tick()
+  const a1 = rectOfBB(G1K)
+  ok(Math.abs(a1.x - want.x) <= 6 && Math.abs(a1.y - want.y) <= 6, 'a card may be dropped straight onto a text box (objects are exempt)', [a1, want])
+  ok(overlapsBB(a1, objRect(textId)), 'and it really is sitting on it')
+  eq(objRect(textId).x, t0.x, 'the text box did not budge')
+  eq(objRect(textId).y, t0.y, 'on either axis')
+  // 反过来：把文本框拖到卡片上 —— 它照旧停在放手的地方，卡片也不动
+  const cardNow = rectOfBB(G1K)
+  const tb = objRect(textId)
+  const t1 = { x: Math.round(cardNow.x + cardNow.w / 2 - tb.w / 2), y: Math.round(cardNow.y + cardNow.h / 2 - tb.h / 2) }
+  const o0 = toClient(tb.x + 8, tb.y + 8)
+  const o1 = toClient(tb.x + 8 + (t1.x - tb.x), tb.y + 8 + (t1.y - tb.y))
+  view.fire(objNodes('text')[0], 'onPointerDown', { button: 0, clientX: o0.clientX, clientY: o0.clientY })
+  view.window('pointermove', { clientX: o1.clientX, clientY: o1.clientY, buttons: 1 })
+  view.window('pointerup', { clientX: o1.clientX, clientY: o1.clientY })
+  await tick()
+  await tick()
+  ok(Math.abs((objRect(textId).x - t1.x)) <= 6 && Math.abs((objRect(textId).y - t1.y)) <= 6,
+    'dragging a text box onto a card leaves it where you dropped it', [objRect(textId), t1])
+  ok(overlapsBB(objRect(textId), rectOfBB(G1K)), 'objects are allowed to cover cards')
+  eq(rectOfBB(G1K).y, cardNow.y, 'and the card under it was not pushed away')
+}
+
+// ③ 改大小撑到邻居身上：尺寸照他改的算，位置让开（往上/往左都会跑出可见区，所以往下去）
+{
+  const g3 = JSON.parse(files[GRAPH])
+  g3.nodes[G1K].x = 40; g3.nodes[G1K].y = 40
+  delete g3.nodes[G1K].w; delete g3.nodes[G1K].h
+  files[GRAPH] = JSON.stringify(g3, null, 2)
+  view.click(refreshBA())
+  await tick()
+  await tick()
+  const grip = subOf(cardNodeOf(G1K)).filter((n) => clsOf(n).indexOf('sc-cardgrip') !== -1)[0]
+  const a0 = rectOfBB(G1K)
+  const gp0 = toClient(a0.x + a0.w, a0.y + a0.h)
+  view.fire(grip, 'onPointerDown', { button: 0, clientX: gp0.clientX, clientY: gp0.clientY })
+  view.window('pointermove', { clientX: gp0.clientX + 300, clientY: gp0.clientY, buttons: 1 })
+  await tick()
+  view.window('pointerup', { clientX: gp0.clientX + 300, clientY: gp0.clientY })
+  await tick()
+  await tick()
+  const a1 = rectOfBB(G1K)
+  eq(a1.w, 176 + 300, 'the new width is the one you dragged')
+  eq(overlapPairsBB().length, 0, 'and the grown card stepped aside instead of overlapping', overlapPairsBB())
+  eq(a1.y, 40 + 120, 'it went below the neighbour (the only escape that stays on screen)')
+  eq(a1.x, 40, 'keeping its left edge')
+  const g3b = JSON.parse(files[GRAPH])
+  eq(g3b.nodes[G1K].w, 476, 'the size is what got written')
+  eq(g3b.nodes[G1K].y, a1.y, 'together with the new spot')
+}
+
+// ④ 引用卡也算「卡片」：从抽屉拖一张压在卡片上，它自己让开
+{
+  view.click(view.findAll('sc-btn').filter((n) => view.textOf(n) === '存档卡')[0])
+  await tick()
+  const target = rectOfBB(G1K)
+  await drawerDrag('人物甲', target.x + target.w / 2, target.y + target.h / 2)
+  await tick()
+  await tick()
+  const refK = 'card/character-x.md'
+  ok(!!(JSON.parse(files[GRAPH]).refs || {}).top && !!(JSON.parse(files[GRAPH]).refs.top || {})[refK], 'the reference landed on this canvas')
+  const rr = refRectOfBB(refK)
+  eq(overlapsBB(rr, rectOfBB(G1K)), false, 'the reference card does not overlap the card it was dropped on')
+  ok(rr.x >= 0 && rr.y >= 0, 'and it stayed inside the canvas instead of being pushed off the top-left corner', rr)
+  view.click(view.findAll('sc-btn').filter((n) => view.textOf(n) === '存档卡')[0])
+  await tick()
+}
+
+// ⑤ 右键双击那条线＝直接删掉它（第一下照旧弹菜单）
+{
+  const ensureEdgeBB = async () => {
+    const g = JSON.parse(files[GRAPH])
+    if (g.edges.some((e) => e.from === G1K && e.to === G2K)) return
+    g.edges = (g.edges || []).filter((e) => !(e.from === G1K && e.to === G2K))
+    g.edges.push({ from: G1K, to: G2K, label: '接着走', choice: '' })
+    files[GRAPH] = JSON.stringify(g, null, 2)
+    view.click(refreshBA())
+    await tick()
+    await tick()
+  }
+  const edgeHitBB = () => view.findAll('sc-edgehit').filter((n) => n.props['data-edge'] === G1K + '->' + G2K)[0]
+  const hasEdgeBB = () => JSON.parse(files[GRAPH]).edges.some((e) => e.from === G1K && e.to === G2K)
+  const menuBtn = (needle) => view.findAll('sc-menuitem').filter((n) => view.textOf(n).indexOf(needle) !== -1)[0]
+  await ensureEdgeBB()
+  ok(!!edgeHitBB(), 'there is a line between the two chapter cards')
+  has(view.textOf(view.find('sc-statushelp')), '右键双击', 'the status bar says the shortcut out loud')
+  // 第一下：照旧弹菜单
+  view.fire(edgeHitBB(), 'onContextMenu', { clientX: 300, clientY: 200 })
+  await tick()
+  ok(!!view.findMaybe('sc-menu'), 'right-clicking the line still opens its menu')
+  ok(!!menuBtn('重命名连线') && !!menuBtn('删除这条连线'), 'with the same rename / delete entries')
+  has(view.textOf(view.find('sc-menu')), '右键双击', 'and the menu itself spells the gesture out')
+  // 第二下落在菜单上（右键双击多半就打在这儿）＝双击 → 直接删线
+  view.fire(view.find('sc-menu'), 'onContextMenu', { clientX: 300, clientY: 200 })
+  await tick()
+  await tick()
+  ok(!hasEdgeBB(), 'a right double-click on the line deletes it outright')
+  eq(view.findMaybe('sc-menu'), null, 'and the menu goes with it')
+  // 时间窗：右键之后隔了 2 秒再点，就不算双击（菜单照旧只是关掉）
+  const realNowBB = Date.now
+  let clockBB = realNowBB()
+  Date.now = () => clockBB
+  await ensureEdgeBB()
+  view.fire(edgeHitBB(), 'onContextMenu', { clientX: 300, clientY: 200 })
+  await tick()
+  ok(!!view.findMaybe('sc-menu'), 'the menu is open again')
+  clockBB += 2000
+  view.fire(view.find('sc-menu'), 'onContextMenu', { clientX: 300, clientY: 200 })
+  await tick()
+  await tick()
+  ok(hasEdgeBB(), 'a second right-click two seconds later is not a double-click — the line stays')
+  Date.now = realNowBB
+  // 第二下落在菜单外面的线上（遮罩）：40px 以内也算双击
+  view.fire(edgeHitBB(), 'onContextMenu', { clientX: 300, clientY: 200 })
+  await tick()
+  view.fire(view.find('sc-menuback'), 'onContextMenu', { clientX: 326, clientY: 212 })
+  await tick()
+  await tick()
+  ok(!hasEdgeBB(), 'a second right-click just off the menu (still on the line) counts as a double-click too')
+  // 隔得远的那一下不算：只是把菜单关掉
+  await ensureEdgeBB()
+  view.fire(edgeHitBB(), 'onContextMenu', { clientX: 300, clientY: 200 })
+  await tick()
+  view.fire(view.find('sc-menuback'), 'onContextMenu', { clientX: 700, clientY: 600 })
+  await tick()
+  await tick()
+  ok(hasEdgeBB(), 'but a second right-click far away does not delete anything')
+  eq(view.findMaybe('sc-menu'), null, 'it just closes the menu')
+}
 
 // 替身自己的 hook 守卫也得是活的，否则「组件被当普通函数调用」这类崩溃在无头测试里
 // 永远看不见 —— 这正是它一路全绿的原因。放在最后跑：它会换掉全局 window。
