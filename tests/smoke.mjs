@@ -221,6 +221,32 @@ const PanelComp = slots['main|script-cards']
 ok(typeof PanelComp === 'function', 'main slot got the panel component')
 ok(typeof slots['sidebar.right.pane.tab|dsh-script-cards/panel'] === 'function', 'sidebar.right.pane.tab got the panel component too')
 
+// 会话标题栏那颗「剧本档案」（用户 2026-10-02：「把剧本档案按钮底部的那个白色框删掉，
+// 保持风格一致」，追问后他确认**连外面那圈细边也不要**，只留图标和字）。做法＝这颗按钮
+// 不再套 `.sc-btn`（那件外衣带底色，标题栏底色是 --dsw-specific-sidebar-fill，垫一层
+// bg-layer-1 上去在浅色主题里就是一块白方框），尺寸照旁边宿主那颗标题栏按钮抄。
+const dockBtn = slots['conversation.session.header.utilities|script-cards']
+ok(typeof dockBtn === 'function', 'the session header utilities slot got its own button')
+{
+  const dockEl = dockBtn({})
+  eq(dockEl.type, 'button', 'it is a plain button')
+  eq(dockEl.props.className, 'sc-dockbtn', 'with only the dock class (no .sc-btn coat, no box)')
+  const kids = [].concat(dockEl.props.children || [])
+  ok(!!kids[0] && kids[0].type === 'svg', 'it carries the little card icon', kids[0] && kids[0].type)
+  eq(kids[1], '剧本档案', 'and its label')
+  const cssSrc = fs.readFileSync('src/10-css.js', 'utf8')
+  const dockRule = (new RegExp('\\.sc-dockbtn\\{([^}]*)\\}').exec(cssSrc) || [])[1] || ''
+  has(dockRule, 'background:none', 'no fill — the white box is gone')
+  has(dockRule, 'border:0', 'no border around it either (that is what he asked for next)')
+  has(dockRule, 'height:24px', 'same height as the host buttons next to it')
+  has(dockRule, 'font-size:11px', 'same font size as the host buttons next to it')
+  ok(dockRule.indexOf('bg-layer-1') === -1, 'it never borrows the raised-surface fill again', dockRule)
+  has(cssSrc, '.sc-dockbtn:hover,.sc-dockbtn:focus-visible{background:var(--dsw-alias-interactive-bg-hover',
+    "hover uses the host's own hover fill (so it still feels clickable)")
+  ok(fs.readFileSync('src/99-apply.js', 'utf8').indexOf("'sc-btn sc-dockbtn'") === -1,
+    'and the header button no longer wears sc-btn at all')
+}
+
 const useSessions = (sel) => sel({ byId: { s1: { cwd: ROOT } } })
 const view = h.mount(h.createElement(PanelComp, { sessionId: 's1', useSessions }))
 await tick()

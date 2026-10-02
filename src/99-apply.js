@@ -107,12 +107,14 @@ function apply(ctx) {
         { name: 'conversation.session.header.utilities', id: 'script-cards', order: 30, label: '剧本档案' },
         function () {
           return React.createElement('button', {
-            className: 'sc-btn sc-dockbtn',
+            // 样式照宿主的标题栏按钮抄（见 10-css 里 .sc-dockbtn 那条注释）：
+            // 不挂 .sc-btn —— 那件外衣带底色，在这条浅色标题栏上就是一块白框。
+            className: 'sc-dockbtn',
             title: '在右侧栏打开剧本档案，与对话并排',
             onClick: function () {
               try { nav.openTab(TAB_KIND) } catch (e) { console.warn('[script-cards] openTab failed', e) }
             },
-          }, PanelIcon({ size: 15 }), '剧本档案')
+          }, PanelIcon({ size: 14 }), '剧本档案')
         })
     })
   }

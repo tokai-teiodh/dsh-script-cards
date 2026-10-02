@@ -68,7 +68,20 @@ const CSS = `
 .sc-narrowhead h2{font-size:13px;font-weight:600;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sc-back{border:none;background:transparent;color:var(--dsw-alias-brand-primary);cursor:pointer;font-size:13px;font-family:inherit;padding:0 6px 0 0;flex:none}
 .sc-narrow .sc-h1{font-size:17px}
-.sc-dockbtn{white-space:nowrap;display:inline-flex;align-items:center;gap:6px}
+/* 会话标题栏里那颗「剧本档案」（slot: conversation.session.header.utilities）。
+   它旁边站的是宿主自己的按钮，所以这里照 @deepseek-ai/dsh-client-ui-open-in-app 那颗
+   OpenTargetButton 的度量抄：**透明底** + 24px 高 + 11px 字 + 圆角 radius-sm +
+   悬停 interactive-bg-hover（宿主那颗的原文见它 client.js 里的 .WgQWqa_split 规则：
+   border .5px solid border-l4 / height 24px）。
+   ⚠ 用户 2026-10-02 报的「那个白色框」有两层：先是他套着 .sc-btn 那件外衣带来的底色
+   （标题栏底色是 --dsw-specific-sidebar-fill，上面再垫一层 bg-layer-1，浅色主题里
+   就是一块白方框），再问一句他确认**连外面那圈细边也不要**，只要图标和字。
+   所以这颗按钮：不挂 .sc-btn、**没有边框、没有底色**，只有悬停时那一层淡底。 */
+.sc-dockbtn{flex:none;white-space:nowrap;display:inline-flex;align-items:center;gap:4px;
+  height:24px;padding:3px 6px;font-family:inherit;font-size:11px;line-height:16px;cursor:pointer;
+  color:var(--dsw-alias-label-primary);background:none;border:0;
+  border-radius:var(--dsw-radius-sm,6px)}
+.sc-dockbtn:hover,.sc-dockbtn:focus-visible{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.14))}
 
 /* 标签条：**平时一点滚动条都看不到**，滑的时候才浮出一根细条（用户的要求）。
    Windows 的原生滚动条带两侧三角箭头，很丑，所以整个藏掉、也不占位；
