@@ -178,6 +178,11 @@ const CSS = `
    卡片一旦自己裁溢出，整列选项连同它们的出口圆点会被裁得干干净净 —— 画布上看起来
    就是「分歧节点右边什么都没有」；接口圆点也会一起被裁成半个。 */
 .sc-card{position:absolute;box-sizing:border-box;border-radius:12px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-base);box-shadow:0 2px 8px rgba(0,0,0,.14);padding:8px 10px;cursor:grab;user-select:none;touch-action:none;overflow:visible;transition:box-shadow .15s,border-color .15s}
+/* 手里正拖着 / 正改大小的那几张抬到最上面（松手那一帧就摘掉，回到 DOM 顺序）。
+   用户 2026-10-02：「相同种类的卡片其实层级是不同的，要把移动时的卡片提高到最高层级」。
+   层级仍守在辅助线(4)、框选(5)、连线名字(6/7) 之下，而且**只管卡片**
+   —— 方框→文字→卡片 那条层序一个字没动（.sc-obj 依旧不给 z-index）。 */
+.sc-card.lift{z-index:3}
 .sc-card:hover{border-color:var(--dsw-alias-label-secondary)}
 .sc-card.on{border-color:var(--sc-accent,var(--dsw-alias-brand-primary));box-shadow:0 0 0 2px var(--sc-accent,var(--dsw-alias-brand-primary))}
 .sc-card.dye{border-color:var(--sc-accent);background:color-mix(in srgb,var(--sc-accent) 9%,var(--dsw-alias-bg-base))}

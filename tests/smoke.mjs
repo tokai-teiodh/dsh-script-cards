@@ -3998,6 +3998,132 @@ const G2BC = 'card/chapter-g2.md'
   eq(((JSON.parse(files[GRAPH]).objects || {}).top || {})[tbId].x, card0.x, 'and the snapped spot is what got saved')
 }
 
+// ── BD. 手里那张抬到最上面 ＋ 让开时不许被推出可见区（用户 2026-10-02）─────────────
+// 原话：「即使是相同种类的卡片，其实层级是不同的，所以说要把移动时的卡片提高到最高层级，
+// 同时你的这个弹开的功能可能会受到卡片的尺寸的影响而不灵敏」。前一句这一版就做（拖动 /
+// 改大小中的那几张临时加 `.lift`，松手摘掉）；后一句他选了「我给你一个能重现的例子」，
+// 所以这里只钉我顺手查出来的那个真缺陷：让开时「别推出可见区」原本只查了左上两条边 ——
+// 卡片被推出右/下边没人管，而卡片越大越容易一头撞出右边。
+console.log('\nBD. the card in hand lifts to the front, and stepping aside never leaves the screen')
+
+const liftedKeys = () => view.findAll('sc-card')
+  .filter((n) => clsOf(n).indexOf('lift') !== -1).map((n) => n.props['data-key'])
+
+// 又来一遍已知场景：两张章节卡（176×120），对象与引用清空、视角归位
+{
+  const g = JSON.parse(files[GRAPH])
+  for (const key of Object.keys(g.nodes || {})) {
+    delete g.nodes[key].x; delete g.nodes[key].y
+    delete g.nodes[key].cx; delete g.nodes[key].cy
+    delete g.nodes[key].w; delete g.nodes[key].h
+  }
+  g.nodes[G1BC].x = 40; g.nodes[G1BC].y = 40
+  g.nodes[G2BC].x = 400; g.nodes[G2BC].y = 40
+  g.objects = {}
+  g.refs = {}
+  files[GRAPH] = JSON.stringify(g, null, 2)
+  view.click(refreshBA())
+  await tick()
+  await tick()
+  view.click(view.findAll('sc-btn').filter((n) => view.textOf(n) === '归位')[0])
+  await tick()
+  eq(liftedKeys().length, 0, 'nothing is lifted while nothing is being dragged')
+}
+
+// ① 按下去那张就抬到最前面，一直抬到松手
+{
+  const a0 = rectOfBB(G1BC)
+  const p0 = toClient(a0.x + 20, a0.y + 20)
+  view.fire(cardNodeOf(G1BC), 'onPointerDown', { button: 0, clientX: p0.clientX, clientY: p0.clientY })
+  await tick()
+  eq(liftedKeys().join(','), G1BC, 'the card you grabbed is the one that comes to the front')
+  view.window('pointermove', { clientX: p0.clientX + 30, clientY: p0.clientY + 20, buttons: 1 })
+  await tick()
+  eq(liftedKeys().join(','), G1BC, 'and it stays in front while you drag it')
+  view.window('pointerup', { clientX: p0.clientX + 30, clientY: p0.clientY + 20 })
+  await tick()
+  await tick()
+  eq(liftedKeys().length, 0, 'the moment you let go it drops back into DOM order')
+}
+
+// ② 整组一起拖：手里那几张一起抬起来
+{
+  clearSel()
+  await tick()
+  view.fire(cardNodeOf(G1BC), 'onContextMenu', { shiftKey: true, clientX: 300, clientY: 300 })
+  view.fire(cardNodeOf(G2BC), 'onContextMenu', { shiftKey: true, clientX: 340, clientY: 300 })
+  await tick()
+  const a0 = rectOfBB(G1BC)
+  const p0 = toClient(a0.x + 20, a0.y + 20)
+  view.fire(cardNodeOf(G1BC), 'onPointerDown', { button: 0, clientX: p0.clientX, clientY: p0.clientY })
+  await tick()
+  eq(liftedKeys().sort().join(','), [G1BC, G2BC].sort().join(','), 'a group drag lifts every card in the group')
+  view.window('pointerup', { clientX: p0.clientX, clientY: p0.clientY })
+  await tick()
+  await tick()
+  eq(liftedKeys().length, 0, 'and the whole group drops back on release')
+}
+
+// ③ 改大小中的那张也抬起来
+{
+  clearSel()
+  await tick()
+  const a0 = rectOfBB(G1BC)
+  const gp = toClient(a0.x + a0.w, a0.y + a0.h)
+  view.fire(gripOf(G1BC), 'onPointerDown', { button: 0, clientX: gp.clientX, clientY: gp.clientY })
+  await tick()
+  eq(liftedKeys().join(','), G1BC, 'resizing a card lifts it too')
+  view.window('pointermove', { clientX: gp.clientX + 20, clientY: gp.clientY, buttons: 1 })
+  await tick()
+  eq(liftedKeys().join(','), G1BC, 'still in front while you resize')
+  view.window('pointerup', { clientX: gp.clientX + 20, clientY: gp.clientY })
+  await tick()
+  await tick()
+  eq(liftedKeys().length, 0, 'and back down after the resize')
+}
+
+// ④ CSS 契约：抬起来那一层仍在辅助线 / 框选 / 连线名字之下，而且**只管卡片**
+{
+  eq(zOf('.sc-card.lift'), 3, 'the lifted card is one z-index rule')
+  ok(zOf('.sc-guide') > 3, 'the alignment guide still draws over it', zOf('.sc-guide'))
+  ok(zOf('.sc-marquee') > 3, 'so does the marquee', zOf('.sc-marquee'))
+  ok(zOf('.sc-elabel') > 3, 'and the line labels', zOf('.sc-elabel'))
+  eq(zOf('.sc-obj') || 0, 0, 'while objects keep no z-index at all (方框→文字→卡片 unchanged)')
+}
+
+// ⑤ 让开时不许把卡片推出可见区：挪到右下角的卡片上，它得往左让、还得整张留在画面里
+{
+  const g = JSON.parse(files[GRAPH])
+  for (const key of Object.keys(g.nodes || {})) { delete g.nodes[key].w; delete g.nodes[key].h }
+  // 可见区（视角归位后，画布坐标）＝ -24..876 × -20..480。邻居正好蹲在右下角，
+  // 手里的卡片只比它右 5px —— 「往右」「往下」都是把卡片推出画面，只有「往左」留得住。
+  g.nodes[G1BC].x = 705; g.nodes[G1BC].y = 360
+  g.nodes[G2BC].x = 700; g.nodes[G2BC].y = 360
+  g.objects = {}
+  g.refs = {}
+  files[GRAPH] = JSON.stringify(g, null, 2)
+  view.click(refreshBA())
+  await tick()
+  await tick()
+  view.click(view.findAll('sc-btn').filter((n) => view.textOf(n) === '归位')[0])
+  await tick()
+  clearSel()
+  await tick()
+  const m0 = rectOfBB(G1BC)
+  const p0 = toClient(m0.x + 20, m0.y + 20)
+  view.fire(cardNodeOf(G1BC), 'onPointerDown', { button: 0, clientX: p0.clientX, clientY: p0.clientY })
+  // 原地点一下放下（不动位置）—— 松手这一下照样要走「让开」
+  view.window('pointermove', { clientX: p0.clientX, clientY: p0.clientY, buttons: 1 })
+  view.window('pointerup', { clientX: p0.clientX, clientY: p0.clientY })
+  await tick()
+  await tick()
+  const m = rectOfBB(G1BC)
+  eq(overlapPairsBB().length, 0, 'the overlap is gone')
+  ok(m.x >= -24 && m.y >= -20 && m.x + m.w <= 877 && m.y + m.h <= 481,
+    'and the card is still entirely inside the visible canvas (the guard has to watch all four edges)', m)
+  ok(m.x + m.w <= 701, 'it stepped aside to the left of the neighbour instead of off the screen', m)
+}
+
 // 替身自己的 hook 守卫也得是活的，否则「组件被当普通函数调用」这类崩溃在无头测试里
 // 永远看不见 —— 这正是它一路全绿的原因。放在最后跑：它会换掉全局 window。
 console.log('\nAD. the harness refuses a component whose hook count changes')

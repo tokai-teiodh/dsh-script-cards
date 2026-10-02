@@ -39,9 +39,9 @@ const PROBE = has('probe')
 //   pinned 钉住多开（两个浮窗同时开着）
 //   full   全屏遮罩模式（背景变暗、画布虚化）
 //   doc    展开态的「文档」页签（DocEditor：脏标记 / 已保存 / 路径 / 等宽输入框）
-const SCENES = ['canvas', 'float', 'pinned', 'full', 'doc', 'talk', 'grid', 'refs', 'objects', 'statusbar', 'statuswide', 'mini']
+const SCENES = ['canvas', 'float', 'pinned', 'full', 'doc', 'talk', 'grid', 'refs', 'objects', 'statusbar', 'statuswide', 'mini', 'lift']
 const SCENE = arg('scene', 'canvas')
-const WIN_SIZE = { canvas: [900, 700], float: [900, 700], pinned: [900, 720], full: [900, 700], doc: [1000, 780], talk: [1060, 780], grid: [900, 700], refs: [980, 620], objects: [900, 620], statusbar: [360, 620], statuswide: [1180, 620], mini: [900, 620] }
+const WIN_SIZE = { canvas: [900, 700], float: [900, 700], pinned: [900, 720], full: [900, 700], doc: [1000, 780], talk: [1060, 780], grid: [900, 700], refs: [980, 620], objects: [900, 620], statusbar: [360, 620], statuswide: [1180, 620], mini: [900, 620], lift: [900, 620] }
 const OUT = arg('out', '')
 
 // ── 兜底主题色（真值的快照；有 asar 就用 asar 里的） ──────────────────────────
@@ -556,6 +556,40 @@ function sceneMarkup(scene) {
       '<span>下级：排本章节的情节顺序（双击卡片展开）</span><span class="sp"></span>' +
       '<button class="sc-btn">自动排列</button></div>'
   }
+  if (scene === 'lift') {
+    // 「手里那张抬到最上面」那一幕（用户 2026-10-02 原话：「即使是相同种类的卡片，其实层级
+    // 是不同的，所以说要把移动时的卡片提高到最高层级」）。这一幕问的是一个纯叠放问题：
+    // 同一种卡片之间本来只有 DOM 顺序说了算，拖着的那张经常被压在别的卡底下；拖 / 改大小
+    // 中的卡片带一个 .lift（z-index:3），松手就摘掉。
+    // 摆法：**上面那一对里，带 .lift 的卡片故意排在 DOM 前面**（不给它 lift 就必输），
+    // 下面那一对谁都不带（对照组，DOM 在后的赢）。中间还插了一根辅助线，量它压在卡片之上。
+    const cardOf = function (key, name, sum, x, y, lift) {
+      return '<div class="sc-card' + (lift ? ' lift' : '') + '" data-key="' + key + '" data-type="node"' +
+        ' style="left:' + x + 'px;top:' + y + 'px;width:156px;height:112px">' +
+        '<div class="sc-cardrow"><span class="sc-cardname">' + name + '</span></div>' +
+        '<div class="sc-cardsum">' + sum + '</div></div>'
+    }
+    return '<div class="sc-nav" style="position:absolute;left:0;right:0;top:0;z-index:50">' +
+      '<button class="sc-navbtn">‹</button><button class="sc-navbtn">›</button>' +
+      '<button class="sc-navbtn">⌂</button><button class="sc-navbtn">⟳</button>' +
+      '<button class="sc-btn">存档卡</button>' +
+      '<div class="sc-addr"><span class="sc-crumb">剧本档案</span><span class="sc-crumbsep">/</span>' +
+      '<span class="sc-crumb cur">G1.1 章节甲</span></div>' +
+      '<span class="sc-boardtip">100%</span>' +
+      '</div>' +
+      '<div class="sc-stage" style="transform:translate(24px,64px) scale(1)">' +
+      '<div class="sc-dots"></div>' +
+      '<div class="sc-guide sc-guidev" data-guide="v" style="left:430px;top:150px;height:210px"></div>' +
+      cardOf('card/node-n1.md', '手里那张', 'DOM 在前，带着 .lift。', 340, 200, true) +
+      cardOf('card/node-n2.md', '被压的那张', 'DOM 在后，没有 .lift。', 400, 150, false) +
+      cardOf('card/node-n3.md', '对照组甲', '谁都没带。', 640, 200, false) +
+      cardOf('card/node-n4.md', '对照组乙', 'DOM 在后，所以它在上面。', 700, 150, false) +
+      '</div>' +
+      '<div class="sc-status" style="position:absolute;left:0;right:0;bottom:0;z-index:50">' +
+      '<span>拖动 / 改大小的卡片会抬到最上面，松手回到原来的层。</span><span class="sp"></span>' +
+      '<button class="sc-btn">自动排列</button><button class="sc-btn">横排</button>' +
+      '</div>'
+  }
   if (scene === 'grid') {
     // 方片页：人物卡右键弹「角色色」菜单 + 一张已经设过色的人物卡
     return '<div class="sc-body">' +
@@ -1036,6 +1070,34 @@ window.__probeAll = function () {
       guide: gd ? { w: Math.round(gd.getBoundingClientRect().width), h: Math.round(gd.getBoundingClientRect().height), pointer: gcs.pointerEvents } : null,
     }
   })()
+  // 「手里那张抬到最上面」（lift 那一幕）：带 .lift 的卡片压在 DOM 更靠后的卡片上；
+  // 谁都没 lift 时照旧由 DOM 顺序决定。这一幕证明的是浏览器里的叠放 —— smoke 只能证明
+  // 真组件把 .lift 挂上了、CSS 里那条规则还在，压不压得住只有排版引擎说了算。
+  out.lift = (function () {
+    const byKey = {}
+    Array.prototype.forEach.call(document.querySelectorAll('.sc-card'), function (c) {
+      byKey[c.getAttribute('data-key')] = c
+    })
+    const lifted = document.querySelector('.sc-card.lift')
+    const guide = document.querySelector('.sc-guide')
+    const k = function (n) { return byKey['card/node-n' + n + '.md'] }
+    if (!lifted || !k(1) || !k(2) || !k(3) || !k(4)) return null
+    const keyAt = function (a, b) {
+      const ra = a.getBoundingClientRect()
+      const rb = b.getBoundingClientRect()
+      const x = (Math.max(ra.left, rb.left) + Math.min(ra.right, rb.right)) / 2
+      const y = (Math.max(ra.top, rb.top) + Math.min(ra.bottom, rb.bottom)) / 2
+      let el = document.elementFromPoint(x, y)
+      while (el && !(el.classList && el.classList.contains('sc-card'))) el = el.parentElement
+      return el ? el.getAttribute('data-key') : null
+    }
+    return {
+      z: { lifted: getComputedStyle(lifted).zIndex, plain: getComputedStyle(k(2)).zIndex },
+      guideZ: guide ? getComputedStyle(guide).zIndex : null,
+      onLiftedPair: keyAt(k(1), k(2)),
+      onPlainPair: keyAt(k(3), k(4)),
+    }
+  })()
   // 底部状态栏：提示整块最多两行、超出的**从最上面往下藏**；右边的按钮永远完整可见。
   out.status = (function () {
     const bar = document.querySelector('.sc-status')
@@ -1342,6 +1404,24 @@ if (bad) process.exit(1)
  */
 function checkScene(scene, p) {
   const errs = []
+  if (scene === 'lift') {
+    // 「手里那张抬到最上面」：这一幕问的是浏览器里的叠放顺序（smoke 走真组件只能证明
+    // 类名挂上了、CSS 规则在，压不压得住得看排版引擎）。
+    const l = p.lift
+    if (!l) { errs.push('没有找到 .sc-card.lift（这一幕的探针量不到）'); return errs }
+    if (l.z.lifted !== '3') errs.push('.sc-card.lift 的 z-index 是 ' + l.z.lifted + '，应当是 3')
+    if (l.z.plain !== 'auto') errs.push('普通卡片的 z-index 是 ' + l.z.plain + '，卡片之间不该有值')
+    if (!(Number(l.guideZ) > Number(l.z.lifted))) {
+      errs.push('辅助线(' + l.guideZ + ')没有压在抬起来的卡片(' + l.z.lifted + ')之上')
+    }
+    if (l.onLiftedPair !== 'card/node-n1.md') {
+      errs.push('叠在一起时摸到的是 ' + l.onLiftedPair + '，应当是带 .lift 的那张（它排在 DOM 前面，不抬就必输）')
+    }
+    if (l.onPlainPair !== 'card/node-n4.md') {
+      errs.push('对照组摸到的是 ' + l.onPlainPair + '，没人 lift 时该由 DOM 顺序决定（node-n4）')
+    }
+    return errs
+  }
   if (scene === 'mini') {
     // 缩略图：牌子上只留标题（两行封顶）、宽度跟着卡片自己的长宽比、这一层不透明。
     // ⚠ 这一幕证明的是「这样的 DOM + CSS 在浏览器里真的长这样」，不是「App 按这个顺序渲染」

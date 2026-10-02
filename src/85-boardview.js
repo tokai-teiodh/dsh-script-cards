@@ -252,11 +252,13 @@ function BoardView(props) {
     if (!list || !list.length) return list
     const others = cardRectsExcept(list.map(function (i) { return i.key }))
     if (!others.length) return list
-    // 当前可见区域的左上角（画布单位）：两个方向一样近时，优先别把卡片推出可视范围
+    // 当前可见区域的四条边（画布单位）：一样近时，优先别把卡片推出可视范围。
     const box = canvasBox()
     const vscale = view.s || 1
     const vx = -view.x / vscale
     const vy = -view.y / vscale
+    const vx2 = vx + box.width / vscale
+    const vy2 = vy + box.height / vscale
     let dx = 0
     let dy = 0
     for (let step = 0; step < 40; step++) {
@@ -282,8 +284,13 @@ function BoardView(props) {
       for (const c of cand) {
         const d = Math.abs(c.x) + Math.abs(c.y)
         if (d < 0.5) continue
-        // 挪得最少优先；同样近时别把卡片推到可见区外面去（罚分遠大于任何一次挪动）
-        const outside = (pair.m.x + c.x < vx - 1 || pair.m.y + c.y < vy - 1) ? 10000 : 0
+        // 挪得最少优先；同样近时别把卡片推到可见区外面去（罚分遠大于任何一次挪动）。
+        // ⚠ 四条边都要看：早先只查左上两条，卡片被推出右/下边就没人管 ——
+        // 卡片越大越容易一头撞出右边，那种「弹一下就没影了」的感觉就是这么来的。
+        const nx = pair.m.x + c.x
+        const ny = pair.m.y + c.y
+        const outside = (nx < vx - 1 || ny < vy - 1
+          || nx + pair.m.w > vx2 + 1 || ny + pair.m.h > vy2 + 1) ? 10000 : 0
         const score = d + outside
         if (!best || score < best.score) best = { score: score, x: c.x, y: c.y }
       }
@@ -1188,7 +1195,7 @@ function BoardView(props) {
         ? multi.slice()
         : ((memberKeys.length > 1) ? memberKeys : [k]))
     dragRef.current = { key: k, dx: start.x - r.x, dy: start.y - r.y, x: r.x, y: r.y, ox: r.x, oy: r.y, moved: false, group: group, pos: null }
-    setDrag({ key: k, x: r.x, y: r.y, pos: null })
+    setDrag({ key: k, x: r.x, y: r.y, pos: null, group: group })
     if (e.currentTarget && typeof e.currentTarget.setPointerCapture === 'function' && e.pointerId !== undefined) {
       try { e.currentTarget.setPointerCapture(e.pointerId) } catch (err) { /* 忽略 */ }
     }
@@ -1205,6 +1212,8 @@ function BoardView(props) {
     cardResizeRef.current = {
       key: k, ox: p.x, oy: p.y, rw: r.w, rh: r.h, moved: false, cur: { w: r.w, h: r.h },
     }
+    // 按下去就抬到最上面（和拖动同一套：手里那张先浮起来，别被别的卡压住看不见）
+    setCardResize({ key: k, rect: { w: r.w, h: r.h } })
     if (e.currentTarget && typeof e.currentTarget.setPointerCapture === 'function' && e.pointerId !== undefined) {
       try { e.currentTarget.setPointerCapture(e.pointerId) } catch (err) { /* 忽略 */ }
     }
@@ -2368,6 +2377,19 @@ function BoardView(props) {
     }
   }
 
+  // 正在拖 / 正在改大小的卡片要**抬到最上面**。用户 2026-10-02 原话：「即使是相同种类的
+  // 卡片，其实层级是不同的，所以说要把移动时的卡片提高到最高层级」—— 画布上的叠放顺序
+  // 本来就是 DOM 顺序（见 `.sc-obj` 那条约定的由来），同一种卡片谁在前谁在后是随机的，
+  // 于是拖着的那张经常被别的卡压住、看不见自己要放到哪儿。这里只给「手里这几张」临时
+  // 加一层 `.lift`（z-index 3，仍在辅助线 4 与连线名字 6/7 之下），松手就回到 DOM 顺序；
+  // 不给 `.sc-obj` 加，卡片的层序约定（方框 → 文字 → 卡片）一个字不改。
+  const liftKeys = {}
+  if (drag) {
+    if (drag.pos) Object.keys(drag.pos).forEach(function (k) { liftKeys[k] = true })
+    else (drag.group && drag.group.length ? drag.group : [drag.key]).forEach(function (k) { liftKeys[k] = true })
+  }
+  if (cardResize) liftKeys[cardResize.key] = true
+
   const cardEls = scope.map(function (c) {
     const k = cardKey(c)
     const r = rects[k]
@@ -2380,6 +2402,7 @@ function BoardView(props) {
       selected: sel === k || multi.indexOf(k) !== -1,
       // 虚化只在全屏遮罩模式下发生：浮动窗口开着时画布还是可以读、可以操作的
       dimmed: scrimOn && !isExpanding,
+      lift: !!liftKeys[k],
       expanded: !!isExpanding,
       hasDoc: c.hasDoc === true,
       childNodes: c.type === 'chapter' ? nodesOfChapter(cards, graph, k) : [],
@@ -2413,6 +2436,7 @@ function BoardView(props) {
       accent: refAccent(c, refRecs[k]),
       selected: sel === k || multi.indexOf(k) !== -1,
       dimmed: scrimOn && !isOpen(k),
+      lift: !!liftKeys[k],
       onCardDown: onCardDown,
       onDouble: function (card) { openExpand(card) },
       onMenu: onCardMenu,

@@ -321,6 +321,8 @@ function CardView(props) {
     props.selected ? 'on' : '',
     accent ? 'dye' : '',
     props.dimmed ? 'dim' : '',
+    // 手里正拖着 / 正改大小的这几张抬到最上面（见 85-boardview 里 liftKeys 那段）
+    props.lift ? 'lift' : '',
   ].filter(Boolean).join(' ')
 
   const hasOut = canOut(type)
@@ -444,7 +446,7 @@ function RefCard(props) {
   const r = props.rect
   const style = { left: r.x, top: r.y, width: r.w, height: r.h }
   if (props.accent) style['--sc-accent'] = props.accent
-  const cls = ['sc-card', 'sc-refcard', props.selected ? 'on' : '', props.accent ? 'dye' : '', props.dimmed ? 'dim' : ''].filter(Boolean).join(' ')
+  const cls = ['sc-card', 'sc-refcard', props.selected ? 'on' : '', props.accent ? 'dye' : '', props.dimmed ? 'dim' : '', props.lift ? 'lift' : ''].filter(Boolean).join(' ')
   return React.createElement('div', {
     className: cls, style: style,
     'data-key': props.cardKey, 'data-type': c.type, 'data-ref': '1',
