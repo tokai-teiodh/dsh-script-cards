@@ -404,6 +404,7 @@ const STATUS_HINTS = [
   '· 右键空白处新建卡片 / 文本框 / 方框 · 粘贴',
   '· 点连线起名字 · 右键双击线＝删线',
   '· 右键拖框选多张 · shift+右键点卡片加选 · Ctrl+A 全选',
+  '· 按住 Shift 拖动 / 改大小＝对齐吸附',
 ]
 
 function statusbarMarkup() {

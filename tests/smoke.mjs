@@ -2861,7 +2861,7 @@ view.fire(objNodes('rect')[0], 'onPointerDown', { button: 0, clientX: grab.clien
 view.window('pointermove', { clientX: grab.clientX + 50, clientY: grab.clientY + 30, buttons: 1 })
 await tick()
 const rpMid = objRect(rectId)
-// 拖动时会吸附对齐（±6 画布像素），所以「跟手」按容差断言
+// 拖动时会吸附对齐（不按 Shift 时不吸，位置就是指针算出来的；容差留着不影响）
 ok(Math.abs((rpMid.x - rp0.x) - 50) <= 6, 'the rectangle follows the pointer (within the snap range)', rpMid.x - rp0.x)
 ok(Math.abs((rpMid.y - rp0.y) - 30) <= 6, 'on both axes', rpMid.y - rp0.y)
 view.window('pointerup', { clientX: grab.clientX + 50, clientY: grab.clientY + 30 })
@@ -3162,7 +3162,8 @@ await tick()
 await tick()
 ok(cardRectOf(follower).x > narrowX, 'auto-arrange pushes the next level further right for a wider card', [narrowX, cardRectOf(follower).x])
 
-// ⑤ 拖动时对齐吸附：上边缘差 3px → 正好吸上去，并且拖的过程中出现辅助线
+// ⑤ 拖动时对齐吸附（**按住 Shift** —— 2026-10-02 起不按 Shift 就完全不吸）：上边缘差 3px
+//    → 正好吸上去，并且拖的过程中出现辅助线
 clearSel()
 const anchor = cardRectOf(PB)
 const mover = nativeKeys().filter((k) => k !== PB && k !== upstream)[0]
@@ -3171,9 +3172,9 @@ const wstart = toClient(mv0.x + 10, mv0.y + 10)
 const dragDx = 40
 const dragDy = anchor.y + 3 - mv0.y
 view.fire(cardNodeOf(mover), 'onPointerDown', { button: 0, clientX: wstart.clientX, clientY: wstart.clientY })
-view.window('pointermove', { clientX: wstart.clientX + dragDx, clientY: wstart.clientY + dragDy, buttons: 1 })
+view.window('pointermove', { clientX: wstart.clientX + dragDx, clientY: wstart.clientY + dragDy, buttons: 1, shiftKey: true })
 await tick()
-eq(cardRectOf(mover).y, anchor.y, 'dragging near another card snaps to its top edge')
+eq(cardRectOf(mover).y, anchor.y, 'dragging near another card with Shift held snaps to its top edge')
 ok(view.findAll('sc-guide').length >= 1, 'and an alignment guide shows up while you drag', view.findAll('sc-guide').length)
 view.window('pointerup', { clientX: wstart.clientX + dragDx, clientY: wstart.clientY + dragDy })
 await tick()
@@ -3227,7 +3228,7 @@ await tick()
 // 菜单没有」「自动排列，它只能竖着排，没法横着排」。
 console.log('\nAX. resize snapping, short guide lines, a grouping entry, horizontal arrange')
 
-// ① 改大小时也吸附：把右边缘拖到离另一张卡左边缘 3px 的地方，应该正好吸上
+// ① 改大小时也吸附（**按住 Shift**）：把右边缘拖到离另一张卡左边缘 3px 的地方，应该正好吸上
 clearSel()
 await tick()
 const axKeys = nativeKeys()
@@ -3238,7 +3239,7 @@ const rsOtherRect = cardRectOf(rsOther)
 const wantW = rsOtherRect.x - rs0.x + 3
 const rsP = toClient(rs0.x + rs0.w, rs0.y + rs0.h)
 view.fire(gripOf(rsKey), 'onPointerDown', { button: 0, clientX: rsP.clientX, clientY: rsP.clientY })
-view.window('pointermove', { clientX: rsP.clientX + (wantW - rs0.w), clientY: rsP.clientY, buttons: 1 })
+view.window('pointermove', { clientX: rsP.clientX + (wantW - rs0.w), clientY: rsP.clientY, buttons: 1, shiftKey: true })
 await tick()
 eq(cardRectOf(rsKey).w, rsOtherRect.x - rs0.x, 'resizing snaps the right edge onto the next card')
 ok(view.findAll('sc-guide').length >= 1, 'and a guide shows up while resizing too')
@@ -3256,7 +3257,7 @@ const gb0 = cardRectOf(gB)
 const ags = toClient(ga0.x + 10, ga0.y + 10)
 const gTargetX = gb0.x + 3
 view.fire(cardNodeOf(gA), 'onPointerDown', { button: 0, clientX: ags.clientX, clientY: ags.clientY })
-view.window('pointermove', { clientX: ags.clientX + (gTargetX - ga0.x), clientY: ags.clientY, buttons: 1 })
+view.window('pointermove', { clientX: ags.clientX + (gTargetX - ga0.x), clientY: ags.clientY, buttons: 1, shiftKey: true })
 await tick()
 const guideEls = view.findAll('sc-guide')
 const vGuide = guideEls.filter((n) => String(n.props.className).indexOf('sc-guidev') !== -1)[0]
@@ -3872,6 +3873,129 @@ eq(overlapPairsBB().length, 0, 'and they start out clear of each other')
   await tick()
   ok(hasEdgeBB(), 'but a second right-click far away does not delete anything')
   eq(view.findMaybe('sc-menu'), null, 'it just closes the menu')
+}
+
+// ── BC. 对齐吸附：按住 Shift 才吸（用户 2026-10-02 原话）────────────────────────
+// 「拖动之后按住 shift 出现引导线，如果不按 shift，那就不出现引导线，这样子自由一点」。
+// 追问后的两条口径：**不按 Shift ＝ 完全不吸、也没有线**（不是「照旧吸、只是不出线」），
+// 而且**改大小照同一个规矩**。文本框 / 方框走的是同一套吸附，一并在这一节钉住。
+console.log('\nBC. alignment snapping only while Shift is held')
+const G1BC = 'card/chapter-g1.md'
+const G2BC = 'card/chapter-g2.md'
+// 摆一个已知场景：两张章节卡（176×120），一张在左上一张在右边；对象和引用卡清空
+{
+  const g = JSON.parse(files[GRAPH])
+  for (const key of Object.keys(g.nodes || {})) {
+    delete g.nodes[key].x; delete g.nodes[key].y
+    delete g.nodes[key].cx; delete g.nodes[key].cy
+    delete g.nodes[key].w; delete g.nodes[key].h
+  }
+  g.nodes[G1BC].x = 40; g.nodes[G1BC].y = 40
+  g.nodes[G2BC].x = 400; g.nodes[G2BC].y = 40
+  g.objects = {}
+  g.refs = {}
+  files[GRAPH] = JSON.stringify(g, null, 2)
+  view.click(refreshBA())
+  await tick()
+  await tick()
+  view.click(view.findAll('sc-btn').filter((n) => view.textOf(n) === '归位')[0])
+  await tick()
+  eq(view.findAll('sc-card').length, 2, 'BC starts from a known two-card canvas', view.findAll('sc-card').map((n) => n.props['data-key']))
+  eq(rectOfBB(G1BC).w, 176, 'and the left card is at its default size')
+  // 手势得说得出口：状态栏最后那一句就是这个规矩（面板一窄从最上面藏，最后一行才永远看得见）
+  has(view.textOf(view.find('sc-statushelp')), '按住 Shift', 'the status bar spells the Shift gesture out')
+}
+
+// ① 拖动：不按 Shift＝完全自由（不吸、不画线）；同一格按住 Shift 立刻吸上；松开又放开；
+//    松手写进图谱的是**自由**那一版，不是吸过的那一版。
+{
+  const a0 = rectOfBB(G1BC)
+  const p0 = toClient(a0.x + 20, a0.y + 20)
+  // 目标位置：上边缘落在邻居上边缘下方 3px —— 老规矩（一直吸）会把它吸到同一条线上
+  const p1 = toClient(a0.x + 20 + 3, a0.y + 20 + 3)
+  view.fire(cardNodeOf(G1BC), 'onPointerDown', { button: 0, clientX: p0.clientX, clientY: p0.clientY })
+  view.window('pointermove', { clientX: p1.clientX, clientY: p1.clientY, buttons: 1 })
+  await tick()
+  const free = rectOfBB(G1BC)
+  eq(free.y, a0.y + 3, 'without Shift the card sits exactly where the pointer says (3px shy of the neighbour)')
+  eq(free.x, a0.x + 3, 'on both axes')
+  eq(view.findAll('sc-guide').length, 0, 'and no guide line is drawn at all')
+  // 同一个坐标，按住 Shift：下一次 pointermove 就吸上并画出辅助线（一帧一判）
+  view.window('pointermove', { clientX: p1.clientX, clientY: p1.clientY, buttons: 1, shiftKey: true })
+  await tick()
+  eq(rectOfBB(G1BC).y, rectOfBB(G2BC).y, 'pressing Shift mid-drag snaps it on the very next move')
+  ok(view.findAll('sc-guide').length >= 1, 'and that is when the guide appears', view.findAll('sc-guide').length)
+  // 松开 Shift：回到指针算出来的位置，线也收掉
+  view.window('pointermove', { clientX: p1.clientX, clientY: p1.clientY, buttons: 1 })
+  await tick()
+  eq(rectOfBB(G1BC).y, a0.y + 3, 'letting Shift go frees it again')
+  eq(view.findAll('sc-guide').length, 0, 'and takes the guide away with it')
+  view.window('pointerup', { clientX: p1.clientX, clientY: p1.clientY })
+  await tick()
+  await tick()
+  const rec = JSON.parse(files[GRAPH]).nodes[G1BC]
+  eq(rec.y, a0.y + 3, 'what gets written to the graph is the free position')
+  eq(rec.x, a0.x + 3, 'on both axes')
+  eq(view.findAll('sc-guide').length, 0, 'and nothing is left over after the drop')
+}
+
+// ② 改大小同理：不按 Shift 拖到哪儿是哪儿，按住 Shift 才吸到邻居的边上
+{
+  const g = JSON.parse(files[GRAPH])
+  g.nodes[G1BC].x = 40; g.nodes[G1BC].y = 40
+  delete g.nodes[G1BC].w; delete g.nodes[G1BC].h
+  files[GRAPH] = JSON.stringify(g, null, 2)
+  view.click(refreshBA())
+  await tick()
+  await tick()
+  const a0 = rectOfBB(G1BC)
+  const other = rectOfBB(G2BC)
+  const wantW = other.x - a0.x + 3
+  const gp0 = toClient(a0.x + a0.w, a0.y + a0.h)
+  const gp1 = toClient(a0.x + a0.w + (wantW - a0.w), a0.y + a0.h)
+  view.fire(gripOf(G1BC), 'onPointerDown', { button: 0, clientX: gp0.clientX, clientY: gp0.clientY })
+  view.window('pointermove', { clientX: gp1.clientX, clientY: gp1.clientY, buttons: 1 })
+  await tick()
+  eq(rectOfBB(G1BC).w, wantW, 'without Shift the width is exactly the one you dragged')
+  eq(view.findAll('sc-guide').length, 0, 'and no guide while resizing either')
+  view.window('pointermove', { clientX: gp1.clientX, clientY: gp1.clientY, buttons: 1, shiftKey: true })
+  await tick()
+  eq(rectOfBB(G1BC).w, other.x - a0.x, 'with Shift the edge snaps flush onto the neighbour')
+  ok(view.findAll('sc-guide').length >= 1, 'and the guide comes with it', view.findAll('sc-guide').length)
+  view.window('pointerup', { clientX: gp1.clientX, clientY: gp1.clientY, shiftKey: true })
+  await tick()
+  await tick()
+  eq(JSON.parse(files[GRAPH]).nodes[G1BC].w, other.x - a0.x, 'and the snapped size is what got written')
+}
+
+// ③ 文本框 / 方框：同一套规矩（它们本来就和卡片用同一个吸附）
+{
+  openBlank(700, 430)
+  await tick()
+  view.click(pickItem('新建文本框'))
+  await tick()
+  await tick()
+  const ed = view.findMaybe('sc-objedit')
+  if (ed) { view.fire(ed, 'onBlur', {}); await tick() }
+  const tbId = String(objNodes('text')[0].props['data-key']).replace(/^obj\//, '')
+  const t0 = objRect(tbId)
+  const card0 = rectOfBB(G2BC)
+  const wantX = card0.x + 3
+  const d0 = toClient(t0.x + 8, t0.y + 8)
+  const d1 = toClient(t0.x + 8 + (wantX - t0.x), t0.y + 8)
+  view.fire(objNodes('text')[0], 'onPointerDown', { button: 0, clientX: d0.clientX, clientY: d0.clientY })
+  view.window('pointermove', { clientX: d1.clientX, clientY: d1.clientY, buttons: 1 })
+  await tick()
+  eq(objRect(tbId).x, wantX, 'a text box is free too while Shift is up')
+  eq(view.findAll('sc-guide').length, 0, 'and it draws no guide either')
+  view.window('pointermove', { clientX: d1.clientX, clientY: d1.clientY, buttons: 1, shiftKey: true })
+  await tick()
+  eq(objRect(tbId).x, card0.x, 'holding Shift snaps the text box onto the card edge')
+  ok(view.findAll('sc-guide').length >= 1, 'guide and all', view.findAll('sc-guide').length)
+  view.window('pointerup', { clientX: d1.clientX, clientY: d1.clientY })
+  await tick()
+  await tick()
+  eq(((JSON.parse(files[GRAPH]).objects || {}).top || {})[tbId].x, card0.x, 'and the snapped spot is what got saved')
 }
 
 // 替身自己的 hook 守卫也得是活的，否则「组件被当普通函数调用」这类崩溃在无头测试里
