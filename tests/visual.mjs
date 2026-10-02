@@ -39,9 +39,9 @@ const PROBE = has('probe')
 //   pinned 钉住多开（两个浮窗同时开着）
 //   full   全屏遮罩模式（背景变暗、画布虚化）
 //   doc    展开态的「文档」页签（DocEditor：脏标记 / 已保存 / 路径 / 等宽输入框）
-const SCENES = ['canvas', 'float', 'pinned', 'full', 'doc', 'talk', 'grid', 'refs', 'objects', 'statusbar', 'statuswide']
+const SCENES = ['canvas', 'float', 'pinned', 'full', 'doc', 'talk', 'grid', 'refs', 'objects', 'statusbar', 'statuswide', 'mini']
 const SCENE = arg('scene', 'canvas')
-const WIN_SIZE = { canvas: [900, 700], float: [900, 700], pinned: [900, 720], full: [900, 700], doc: [1000, 780], talk: [1060, 780], grid: [900, 700], refs: [980, 620], objects: [900, 620], statusbar: [360, 620], statuswide: [1180, 620] }
+const WIN_SIZE = { canvas: [900, 700], float: [900, 700], pinned: [900, 720], full: [900, 700], doc: [1000, 780], talk: [1060, 780], grid: [900, 700], refs: [980, 620], objects: [900, 620], statusbar: [360, 620], statuswide: [1180, 620], mini: [900, 620] }
 const OUT = arg('out', '')
 
 // ── 兜底主题色（真值的快照；有 asar 就用 asar 里的） ──────────────────────────
@@ -430,11 +430,61 @@ function statusbarMarkup() {
     '<button class="sc-btn">横排</button>' +
     '<div class="sc-zoombar"><button class="sc-navbtn">－</button><button class="sc-navbtn">＋</button>' +
     '<button class="sc-btn">归位</button></div>' +
+    // 缩略图那本按钮在状态栏最右边（2026-10-02 加的）：窄面板下也得完整看得见
+    '<button class="sc-btn">缩略图</button>' +
     '</div>'
 }
 
 function sceneMarkup(scene) {
   if (scene === 'statusbar' || scene === 'statuswide') return statusbarMarkup()
+  if (scene === 'mini') {
+    // 缩略图（用户 2026-10-02：「右下角加一个缩略图按钮，按下之后所有卡片相对位置不变，
+    // 但是只显示标题（分为两行，这样大小合适），同时相对距离随之缩小，这个还要适配已经
+    // 改变长宽比的卡片」）。结构照 85-boardview 的真实渲染顺序：
+    //   .sc-canvas > .sc-mini（不透明的一整层）> svg.sc-miniedges + .sc-minitile + .sc-miniobj
+    // 牌子尺寸＝高度取缩小后的卡片高度（夹在 24~42，两行 10px 标题刚好装下）、
+    // 宽度＝高度 × 这张卡自己的长宽比。三张牌子分别是：普通节点（156×112）、
+    // **加宽过**的卡片（360×96 → 3.75:1，牌子明显更宽）、标题特别长的一张（用来量两行封顶）。
+    const tiles = [
+      { x: 60, y: 74, w: 58, h: 42, key: 'card/node-n1.md', title: '节点一：面试三女神' },
+      { x: 210, y: 190, w: 158, h: 42, key: 'card/node-n2.md', title: '节点二（加宽过的卡片）', dye: '#8EB2FC' },
+      { x: 470, y: 330, w: 58, h: 42, key: 'card/node-n3.md', title: '一个很长很长的卡片标题要占满两行之后被裁掉' },
+    ]
+    return '<div class="sc-nav" style="position:absolute;left:0;right:0;top:0;z-index:50">' +
+      '<button class="sc-navbtn">‹</button><button class="sc-navbtn">›</button>' +
+      '<button class="sc-navbtn">⌂</button><button class="sc-navbtn">⟳</button>' +
+      '<button class="sc-btn">存档卡</button>' +
+      '<div class="sc-addr"><span class="sc-crumb">剧本档案</span><span class="sc-crumbsep">/</span>' +
+      '<span class="sc-crumb cur">G1.1 章节甲</span></div>' +
+      '<span class="sc-boardtip">100%</span>' +
+      '</div>' +
+      '<div class="sc-mini" data-mini="1" data-wheel="own">' +
+      '<svg class="sc-miniedges" width="100%" height="100%">' +
+      '<path class="sc-miniedge" d="M118,95 C160,95 168,211 210,211"></path>' +
+      '<path class="sc-miniedge" d="M368,211 C420,211 428,351 470,351"></path>' +
+      '</svg>' +
+      '<div class="sc-miniobj rect" data-key="obj/r1" style="left:300px;top:60px;width:120px;height:60px;--sc-accent:#3FA46A"></div>' +
+      '<div class="sc-miniobj text" data-key="obj/t1" style="left:640px;top:440px;width:90px;height:44px"></div>' +
+      tiles.map(function (t) {
+        return '<div class="sc-minitile' + (t.dye ? ' dye' : '') + '" data-key="' + t.key + '"' +
+          (t.dye ? ' style="--sc-accent:' + t.dye + ';left:' + t.x + 'px;top:' + t.y + 'px;width:' + t.w + 'px;height:' + t.h + 'px"' :
+            ' style="left:' + t.x + 'px;top:' + t.y + 'px;width:' + t.w + 'px;height:' + t.h + 'px"') + '>' +
+          '<div class="sc-minititle">' + t.title + '</div></div>'
+      }).join('') +
+      '</div>' +
+      '<div class="sc-status" style="position:absolute;left:0;right:0;bottom:0;z-index:50">' +
+      '<div class="sc-statushelp">' +
+      '<span>缩略图：整块画布只留标题（位置按比例缩到一屏）</span>' +
+      '<span>· 点一张卡片＝退出缩略图并回到那张卡 · 点空白处或再按一次「缩略图」退出</span>' +
+      '</div>' +
+      '<span class="sp"></span>' +
+      '<button class="sc-btn">自动排列</button>' +
+      '<button class="sc-btn">横排</button>' +
+      '<div class="sc-zoombar"><button class="sc-navbtn">－</button><button class="sc-navbtn">＋</button>' +
+      '<button class="sc-btn">归位</button></div>' +
+      '<button class="sc-btn sc-btn-on">缩略图</button>' +
+      '</div>'
+  }
   if (scene === 'refs') {
     // 引用卡那一幕：存档卡抽屉开着 + 画布上一张章节引用、一张人物引用（用角色色）、
     // 一张原生节点卡。引用卡没有连线圆点，左下角一个「引用」角标。
@@ -994,7 +1044,7 @@ window.__probeAll = function () {
     const hr = help ? help.getBoundingClientRect() : null
     const box = function (el) {
       const r = el.getBoundingClientRect()
-      return { top: Math.round(r.top), bottom: Math.round(r.bottom), h: Math.round(r.height) }
+      return { top: Math.round(r.top), bottom: Math.round(r.bottom), left: Math.round(r.left), right: Math.round(r.right), h: Math.round(r.height) }
     }
     return {
       bar: box(bar),
@@ -1016,6 +1066,56 @@ window.__probeAll = function () {
     }
   })()
   out.bodyScroll = [document.documentElement.scrollWidth, window.innerWidth]
+  // 缩略图那一幕：牌子在不在画布里面、标题是不是真的封在两行、宽度有没有跟着卡片的长宽比走、
+  // 这一层是不是不透明（不透明才谈得上「只显示标题」—— 否则底下的画布会透上来）。
+  out.mini = (function () {
+    const ov = document.querySelector('.sc-mini')
+    if (!ov) return null
+    const orb = ov.getBoundingClientRect()
+    const cv = ov.parentNode.getBoundingClientRect()
+    const status = document.querySelector('.sc-status')
+    return {
+      overlay: {
+        bg: getComputedStyle(ov).backgroundColor,
+        z: getComputedStyle(ov).zIndex,
+        w: Math.round(orb.width),
+        h: Math.round(orb.height),
+      },
+      canvas: { w: Math.round(cv.width), h: Math.round(cv.height) },
+      statusTop: status ? Math.round(status.getBoundingClientRect().top - cv.top) : null,
+      edges: ov.querySelectorAll('.sc-miniedge').length,
+      objs: Array.prototype.map.call(ov.querySelectorAll('.sc-miniobj'), function (el) {
+        const r = el.getBoundingClientRect()
+        return {
+          kind: el.getAttribute('data-key') === 'obj/r1' ? 'rect' : 'text',
+          bg: getComputedStyle(el).backgroundColor,
+          borderStyle: getComputedStyle(el).borderTopStyle,
+          rect: [Math.round(r.left - cv.left), Math.round(r.top - cv.top), Math.round(r.width), Math.round(r.height)],
+        }
+      }),
+      tiles: Array.prototype.map.call(ov.querySelectorAll('.sc-minitile'), function (el) {
+        const t = el.querySelector('.sc-minititle')
+        const r = el.getBoundingClientRect()
+        const tr = t ? t.getBoundingClientRect() : null
+        const cs = t ? getComputedStyle(t) : null
+        const lh = cs ? (parseFloat(cs.lineHeight) || 0) : 0
+        return {
+          key: el.getAttribute('data-key') || '',
+          text: t ? t.textContent : '',
+          ratio: r.height ? r.width / r.height : 0,
+          rect: [Math.round(r.left - cv.left), Math.round(r.top - cv.top), Math.round(r.width), Math.round(r.height)],
+          padY: cs ? (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0) : 0,
+          clamp: cs ? (cs.webkitLineClamp || cs.getPropertyValue('-webkit-line-clamp')) : '',
+          overflow: cs ? cs.overflow : '',
+          lineHeight: lh,
+          lines: lh && tr ? tr.height / lh : 0,
+          titleH: tr ? Math.round(tr.height) : 0,
+          // 标题整块（含两行）有没有落在牌子里面 —— 越出去就是被裁了一半
+          titleInside: !!tr && tr.top >= r.top - 1 && tr.bottom <= r.bottom + 1,
+        }
+      }),
+    }
+  })()
   return out
 }
 `
@@ -1241,6 +1341,54 @@ if (bad) process.exit(1)
  */
 function checkScene(scene, p) {
   const errs = []
+  if (scene === 'mini') {
+    // 缩略图：牌子上只留标题（两行封顶）、宽度跟着卡片自己的长宽比、这一层不透明。
+    // ⚠ 这一幕证明的是「这样的 DOM + CSS 在浏览器里真的长这样」，不是「App 按这个顺序渲染」
+    //（后者由 smoke 的 BA 段走真组件来钉）。
+    const m = p.mini
+    if (!m) { errs.push('没有找到 .sc-mini（缩略图那一层）'); return errs }
+    if (m.tiles.length !== 3) errs.push('牌子 ' + m.tiles.length + ' 块，应当是 3 块')
+    if (!(m.edges >= 2)) errs.push('缩略图里的连线只有 ' + m.edges + ' 条')
+    if (m.objs.length !== 2) errs.push('独立对象 ' + m.objs.length + ' 块，应当是 2 块（方框 + 文本框）')
+    // 不透明才谈得上「只显示标题」：底下的正常画布不许透上来
+    const bg = String(m.overlay.bg || '')
+    const alpha = /rgba?\([^)]*,\s*([\d.]+)\s*\)/.exec(bg)
+    if (alpha && Number(alpha[1]) < 0.9) errs.push('缩略图那一层是半透明的（' + bg + '），底下的画布会透上来')
+    for (const t of m.tiles) {
+      if (!t.text) errs.push('有块牌子没有标题')
+      if (t.clamp !== '2') errs.push('牌子「' + t.text.slice(0, 8) + '」的 -webkit-line-clamp 是 ' + t.clamp + '，应当封在两行')
+      if (t.overflow !== 'hidden') errs.push('牌子「' + t.text.slice(0, 8) + '」的 overflow 是 ' + t.overflow + '，多出来的字没裁掉')
+      if (!t.titleInside) errs.push('牌子「' + t.text.slice(0, 8) + '」的标题越出了牌子（被裁了一半）')
+      if (t.lines > 2.2) errs.push('牌子「' + t.text.slice(0, 8) + '」的标题占了 ' + t.lines.toFixed(1) + ' 行，应当最多两行')
+      const [tx, ty, tw, th] = t.rect
+      if (tx < 0 || ty < 0 || tx + tw > m.canvas.w + 1 || ty + th > m.canvas.h + 1) {
+        errs.push('牌子「' + t.text.slice(0, 8) + '」跑出画布了：' + JSON.stringify(t.rect))
+      }
+      if (m.statusTop !== null && ty + th > m.statusTop + 1) {
+        errs.push('牌子「' + t.text.slice(0, 8) + '」压到底部状态栏上了')
+      }
+    }
+    // 长标题那张真的用了两行（不是被压成一行看不见），普通那张至少有一行字
+    const long = m.tiles.filter(function (t) { return t.text.length > 12 })[0]
+    if (!long) errs.push('没有一块牌子是长标题，量不到「两行」')
+    else if (!(long.lines > 1.6)) errs.push('长标题只占了 ' + long.lines.toFixed(1) + ' 行，没用到两行')
+    const normal = m.tiles.filter(function (t) { return t.text.length <= 12 })[0]
+    if (normal && !(normal.lines >= 0.9)) errs.push('普通牌子的标题一行都没露出来')
+    // 宽度跟着卡片自己的长宽比走：加宽过的那张（360×96 → 3.75:1）明显比普通卡（1.39:1）宽
+    const wide = m.tiles.filter(function (t) { return t.key === 'card/node-n2.md' })[0]
+    const plain = m.tiles.filter(function (t) { return t.key === 'card/node-n1.md' })[0]
+    if (!wide || !plain) errs.push('少了用来比长宽比的两块牌子')
+    else {
+      if (!(wide.ratio > plain.ratio * 2)) {
+        errs.push('加宽过的卡片在缩略图里是 ' + wide.ratio.toFixed(2) + ':1，普通卡是 ' + plain.ratio.toFixed(2) + ':1 —— 宽高比没跟着卡片走')
+      }
+      if (Math.abs(wide.rect[3] - plain.rect[3]) > 1) {
+        errs.push('两张牌子的高度不一样（' + wide.rect[3] + ' / ' + plain.rect[3] + '）—— 高度应当由缩小后的卡片高度决定，宽度才按比例走')
+      }
+    }
+    if (p.bodyScroll && p.bodyScroll[0] > p.bodyScroll[1]) errs.push('这一幕把页面撑出横向滚动条了')
+    return errs
+  }
   if (scene === 'statusbar' || scene === 'statuswide') {
     // 面板一窄，底部这几句提示就换行，整条状态栏要是跟着长高，画布就被往上挤
     // （用户原话：「他在界面缩短的时候会抬高」）。现在提示整块的高度钉在两行以内
@@ -1278,6 +1426,10 @@ function checkScene(scene, p) {
       for (const c of st.ctrl) {
         if (c.top < st.bar.top - 1 || c.bottom > st.bar.bottom + 1) {
           errs.push('状态栏里的「' + c.text + '」被裁掉了一部分：' + JSON.stringify(c) + ' / bar ' + JSON.stringify(st.bar))
+        }
+        // 横向也要在栏里：右下角这几颗（含 2026-10-02 加的「缩略图」）挤出去就等于点不到
+        if (c.left < st.bar.left - 1 || c.right > st.bar.right + 1) {
+          errs.push('状态栏里的「' + c.text + '」横着挤出栏了：' + JSON.stringify(c) + ' / bar ' + JSON.stringify(st.bar))
         }
       }
     }

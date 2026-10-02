@@ -3408,6 +3408,216 @@ has(helpRule, 'max-height:33px', 'the hint block is capped at two lines')
 has(helpRule, 'overflow:hidden', 'and clips whatever does not fit')
 has(helpRule, 'align-content:flex-end', 'and keeps the bottom lines (it hides from the top down)')
 
+// ── BA. 缩略图（用户 2026-10-02 原话）─────────────────────────────────────────
+// 「右下角加一个缩略图按钮，按下之后所有卡片相对位置不变，但是只显示标题（分为两行，
+//  这样大小合适），同时相对距离随之缩小，这个还要适配已经改变长宽比的卡片」
+console.log('\nBA. the thumbnail view: title-only tiles, one scale, custom aspect ratios')
+const subBA = (root) => {
+  const out = []
+  const visit = (n) => { if (!n) return; out.push(n); (n.children || []).forEach(visit) }
+  visit(root)
+  return out
+}
+const clsBA = (n) => String((n.props && n.props.className) || '')
+const miniBtnBA = () => view.findAll('sc-btn').filter((n) => view.textOf(n) === '缩略图')[0]
+const tilesBA = () => view.findAll('sc-minitile')
+const tileOfBA = (k) => tilesBA().filter((n) => n.props['data-key'] === k)[0]
+const tileBoxBA = (n) => ({
+  x: Number(n.props.style.left), y: Number(n.props.style.top),
+  w: Number(n.props.style.width), h: Number(n.props.style.height),
+})
+const centerBA = (b) => ({ x: b.x + b.w / 2, y: b.y + b.h / 2 })
+const shownKeysBA = () => view.findAll('sc-card').map((n) => n.props['data-key'])
+const partOfBA = (k, cls) => {
+  const n = cardNodeOf(k)
+  if (!n) return null
+  return subBA(n).filter((x) => clsBA(x).indexOf(cls) !== -1)[0] || null
+}
+const nameOfBA = (k) => {
+  const code = partOfBA(k, 'sc-cardcode')
+  const name = partOfBA(k, 'sc-cardname')
+  return (code ? view.textOf(code) + ' ' : '') + (name ? view.textOf(name) : '')
+}
+const barCtrlBA = () => subBA(view.find('sc-status'))
+  .filter((n) => n.kind === 'host' && /(^|\s)(sc-btn|sc-navbtn)(\s|$)/.test(clsBA(n)))
+const refreshBA = () => view.findAll('sc-navbtn').filter((n) => n.props.title === '刷新画布')[0]
+
+// ① 这颗按钮在右下角 —— 也就是状态栏最右边那一颗
+ok(!!miniBtnBA(), 'the status bar has a thumbnail button')
+eq(view.textOf(barCtrlBA()[barCtrlBA().length - 1]), '缩略图',
+  'and it is the right-most button of the status bar (the bottom-right corner)')
+
+// ② 先把画布摆成一个**已知**的布局再量：三张卡片放到固定的三个点，
+//    其余卡片先撤下画布（还在堆叠条里，只是不占画布）。缩略图的几何这样才好核。
+const pickBA = nativeKeys().slice(0, 3)
+eq(pickBA.length, 3, 'three cards to measure with', nativeKeys())
+const SPREAD_BA = [{ x: 40, y: 40 }, { x: 520, y: 300 }, { x: 260, y: 200 }]
+const gBA = JSON.parse(files[GRAPH])
+for (const key of Object.keys(gBA.nodes || {})) {
+  delete gBA.nodes[key].x; delete gBA.nodes[key].y
+  delete gBA.nodes[key].cx; delete gBA.nodes[key].cy
+}
+pickBA.forEach(function (k, i) {
+  const rec = gBA.nodes[k] || (gBA.nodes[k] = {})
+  rec.x = SPREAD_BA[i].x; rec.y = SPREAD_BA[i].y
+  rec.cx = SPREAD_BA[i].x; rec.cy = SPREAD_BA[i].y
+  // 前面几小节改过的宽高先清掉：这三张都回到这一档的默认尺寸，量出来的比例才是已知的
+  delete rec.w
+  delete rec.h
+})
+gBA.objects = {}
+gBA.refs = {}
+files[GRAPH] = JSON.stringify(gBA, null, 2)
+view.click(refreshBA())
+await tick()
+await tick()
+const keysBA = shownKeysBA()
+eq(keysBA.length, 3, 'the canvas shows exactly those three cards', keysBA)
+const rectBA = {}
+const nameBA = {}
+const sumBA = {}
+for (const k of keysBA) {
+  rectBA[k] = cardRectOf(k)
+  nameBA[k] = nameOfBA(k)
+  const s = partOfBA(k, 'sc-cardsum')
+  sumBA[k] = s ? view.textOf(s) : ''
+}
+
+// ③ 按下去：整块画布换成缩略图那一层，正常画布不再渲染
+view.click(miniBtnBA())
+await tick()
+await tick()
+ok(!!view.findMaybe('sc-mini'), 'pressing it swaps the canvas for the thumbnail layer')
+eq(view.findMaybe('sc-stage'), null, 'and the normal canvas is not drawn underneath (only titles are on screen)')
+eq(view.findAll('sc-card').length, 0, 'no full card is left on screen')
+eq(tilesBA().length, 3, 'every card on the canvas has its own tile')
+ok(String(miniBtnBA().props.className).indexOf('sc-btn-on') !== -1, 'the button shows the thumbnail is on')
+ok(view.textOf(view.find('sc-statushelp')).indexOf('缩略图') !== -1, 'the status bar switches to thumbnail hints')
+ok(view.textOf(view.find('sc-statushelp')).indexOf('点一张卡片') !== -1, 'and says how to get back out')
+
+// ④ 每张牌子上**只有标题**（两行封顶的那条在 CSS 里，真浏览器量在 visual 的 mini 幕）
+const richBA = keysBA.filter((k) => sumBA[k].length > 4)[0]
+ok(!!richBA, 'one of the cards has a summary to compare against', Object.keys(sumBA).map((k) => sumBA[k].length))
+const tileRich = tileOfBA(richBA)
+ok(!!tileRich, 'that card has a tile')
+const hostsRich = subBA(tileRich).filter((n) => n.kind === 'host')
+eq(hostsRich.length, 2, 'a tile is just the tile plus one line')
+eq(clsBA(hostsRich[1]), 'sc-minititle', 'and that line is the title element')
+eq(view.textOf(tileRich), nameBA[richBA], 'a tile shows exactly the name the card shows')
+ok(view.textOf(tileRich).indexOf(sumBA[richBA]) === -1, 'and nothing of the card body', view.textOf(tileRich))
+ok(keysBA.every((k) => view.textOf(tileOfBA(k)) === nameBA[k]), 'every tile is title-only')
+const objsBA = () => view.findAll('sc-miniobj')
+eq(objsBA().length, 0, 'and no text box / rectangle tile (there is none on this canvas)')
+
+// ⑤ 一个比例：相对位置一个不差、距离整体变小
+const A = pickBA[0]
+const B = pickBA[1]
+const ca = centerBA(rectBA[A])
+const cb = centerBA(rectBA[B])
+const ta = centerBA(tileBoxBA(tileOfBA(A)))
+const tb = centerBA(tileBoxBA(tileOfBA(B)))
+const dxc = cb.x - ca.x
+const dyc = cb.y - ca.y
+const dxt = tb.x - ta.x
+const dyt = tb.y - ta.y
+const rx = dxt / dxc
+const ry = dyt / dyc
+ok(rx > 0.05 && rx < 0.95, 'the whole layout is shrunk, not redrawn somewhere else', rx)
+ok(Math.abs(rx - ry) / Math.abs(rx) < 0.06, 'x and y share one single scale (relative positions are unchanged)', [rx, ry])
+ok(Math.abs(Math.atan2(dyc, dxc) - Math.atan2(dyt, dxt)) < 0.05,
+  'and the bearing between the two cards is unchanged', [dyc / dxc, dyt / dxt])
+ok(Math.hypot(dxt, dyt) < Math.hypot(dxc, dyc) - 10,
+  'the distance between them shrank', [Math.hypot(dxc, dyc), Math.hypot(dxt, dyt)])
+
+// ⑥ 适配改过长宽比的卡片：把一张卡改成很宽的形状，它的牌子还是那个形状
+view.click(miniBtnBA())
+await tick()
+await tick()
+eq(view.findMaybe('sc-mini'), null, 'pressing it again leaves the thumbnail')
+ok(!!view.findMaybe('sc-stage'), 'and the normal canvas is back')
+const wideBA = pickBA[1]
+const gWide = JSON.parse(files[GRAPH])
+gWide.nodes[wideBA].w = 360
+gWide.nodes[wideBA].h = 96
+files[GRAPH] = JSON.stringify(gWide, null, 2)
+view.click(refreshBA())
+await tick()
+await tick()
+const rWide = cardRectOf(wideBA)
+const rNorm = cardRectOf(pickBA[0])
+eq(rWide.w, 360, 'the card really is wide now')
+view.click(miniBtnBA())
+await tick()
+await tick()
+const tWide = tileBoxBA(tileOfBA(wideBA))
+const tNorm = tileBoxBA(tileOfBA(pickBA[0]))
+ok(Math.abs(tWide.w / tWide.h - rWide.w / rWide.h) < 0.25,
+  'a widened card keeps its own aspect ratio in the thumbnail', [tWide.w / tWide.h, rWide.w / rWide.h])
+ok(tWide.w > tNorm.w + 10, 'so its tile is wider than a default card tile', [tWide.w, tNorm.w])
+ok(Math.abs(tNorm.w / tNorm.h - rNorm.w / rNorm.h) < 0.25,
+  'and a default card keeps its own ratio too', [tNorm.w / tNorm.h, rNorm.w / rNorm.h])
+
+// ⑦ 点一张牌子 = 退出缩略图并回到那张卡（视口把它摆到画布中间、连缩放都不动）
+const jumpBA = pickBA[2]
+const zoomBA = atZoom()
+view.click(tileOfBA(jumpBA))
+await tick()
+await tick()
+eq(view.findMaybe('sc-mini'), null, 'clicking a tile leaves the thumbnail')
+ok(!!view.findMaybe('sc-stage'), 'the canvas is back')
+ok(selectedKeys().indexOf(jumpBA) !== -1, 'and the card you clicked is the selected one', selectedKeys())
+const t7 = translateOf()
+const s7 = atZoom() / 100
+const cx7 = t7.x + (rectBA[jumpBA].x + rectBA[jumpBA].w / 2) * s7
+const cy7 = t7.y + (rectBA[jumpBA].y + rectBA[jumpBA].h / 2) * s7
+ok(Math.abs(cx7 - 450) <= 3 && Math.abs(cy7 - 250) <= 3,
+  'the view is centred on that card (the canvas is 900×500 here)', [cx7, cy7])
+eq(atZoom(), zoomBA, 'and the zoom level is left alone')
+
+// ⑧ 点空白处也退出
+view.click(miniBtnBA())
+await tick()
+await tick()
+ok(!!view.findMaybe('sc-mini'), 'back in the thumbnail')
+view.click(view.find('sc-mini'))
+await tick()
+await tick()
+eq(view.findMaybe('sc-mini'), null, 'clicking the empty space leaves the thumbnail as well')
+
+// ⑨ 换一层画布就不留在缩略图里（缩略图看的是当前这一层的摆法）
+view.click(miniBtnBA())
+await tick()
+await tick()
+ok(!!view.findMaybe('sc-mini'), 'in the thumbnail once more')
+const upBtnBA = view.findAll('sc-crumb').filter((n) => n.tag === 'button')[0]
+if (upBtnBA) {
+  view.click(upBtnBA)
+  await tick()
+  await tick()
+  eq(view.findMaybe('sc-mini'), null, 'going back up to the chapter list leaves the thumbnail')
+  // 上一层画布上的章节卡在前面都被撤下来了 → 这块画布是空的，按钮该置灰
+  eq(shownKeysBA().length, 0, 'the chapter list canvas is empty here')
+  eq(miniBtnBA().props.disabled, true, 'the thumbnail button is greyed out when there is nothing to shrink')
+} else {
+  ok(!upBtnBA, 'already on the top canvas: there is no level above to walk away to')
+}
+
+// ⑩ 源码契约：一条比例、牌子宽度取自卡片自己的长宽比、标题两行封顶、层是不透明的一整层
+// （detail 只给 needle：这几个 haystack 是整份源码，红了不该往终端倒 13 万字符）
+const inFileBA = (hay, needle, label) => ok(String(hay).indexOf(needle) !== -1, label, needle.slice(0, 48))
+const bvBA = fs.readFileSync('src/85-boardview.js', 'utf8')
+inFileBA(bvBA, 'w = clamp(h * ratio, MINI_TILE_W_MIN, MINI_TILE_W_MAX)',
+  'the tile width is computed from the card own aspect ratio')
+inFileBA(bvBA, 'const k = clamp(Math.min(availW / bw, availH / bh), MINI_S_MIN, MINI_S_MAX)',
+  'one single scale shrinks the whole layout')
+inFileBA(bvBA, "'data-wheel': 'own',", 'the thumbnail layer swallows the wheel (the canvas behind is not drawn)')
+const cssBA = fs.readFileSync('src/10-css.js', 'utf8')
+const miniTitleBA = (cssBA.match(/\.sc-minititle\{[^}]*\}/) || [''])[0]
+inFileBA(miniTitleBA, '-webkit-line-clamp:2', 'the tile title is clamped to two lines')
+inFileBA(miniTitleBA, 'overflow:hidden', 'and whatever does not fit is clipped')
+inFileBA((cssBA.match(/\.sc-mini\{[^}]*\}/) || [''])[0], 'background:var(--dsw-alias-bg-layer-1)',
+  'the thumbnail layer is opaque (nothing shows through from the canvas behind)')
+
 // 替身自己的 hook 守卫也得是活的，否则「组件被当普通函数调用」这类崩溃在无头测试里
 // 永远看不见 —— 这正是它一路全绿的原因。放在最后跑：它会换掉全局 window。
 console.log('\nAD. the harness refuses a component whose hook count changes')

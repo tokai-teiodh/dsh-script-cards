@@ -136,6 +136,27 @@ const CSS = `
 /* 分组悬停时底下那层淡背景：只表示「这一片是一个组」，不吃点击 ——
    右键那块**空白处**才算唤起整组，点卡片本身仍然只走单卡逻辑（用户拍板）。 */
 .sc-groupbg{position:absolute;z-index:0;border-radius:16px;background:rgba(127,127,127,.10);border:1px dashed rgba(127,127,127,.34);pointer-events:none}
+/* 缩略图（用户在 2026-10-02 要的：右下角一个按钮，按下去所有卡片只留标题）。
+   它是**另画一层**，不是把画布缩一缩：卡片本身在缩略图里换成一块小牌子 ——
+   位置按比例缩到一屏（相对位置一个不差、距离整体变小），牌子高度按缩小后的卡片高度定
+   （带上下限，保证两行标题装得下），宽度按卡片自己的长宽比算（改过宽高的卡片照它的比例来）。
+   这一层不透明：底下的正常画布在缩略图模式下不再渲染。 */
+.sc-mini{position:absolute;inset:0;z-index:12;overflow:hidden;background:var(--dsw-alias-bg-layer-1);cursor:default;user-select:none}
+.sc-miniedges{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}
+.sc-miniedge{fill:none;stroke:var(--dsw-alias-label-secondary);stroke-width:1;opacity:.45}
+.sc-minitile{position:absolute;box-sizing:border-box;border-radius:7px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-base);box-shadow:0 1px 4px rgba(0,0,0,.18);padding:3px 5px;overflow:hidden;cursor:pointer;user-select:none}
+.sc-minitile:hover{border-color:var(--sc-accent,var(--dsw-alias-brand-primary));box-shadow:0 0 0 2px var(--sc-accent,var(--dsw-alias-brand-primary))}
+.sc-minitile.dye{border-color:var(--sc-accent);background:color-mix(in srgb,var(--sc-accent) 9%,var(--dsw-alias-bg-base))}
+.sc-minitile.on{border-color:var(--sc-accent,var(--dsw-alias-brand-primary));box-shadow:0 0 0 2px var(--sc-accent,var(--dsw-alias-brand-primary))}
+/* 只显示标题、两行封顶（多余的字裁掉，不撑破牌子） */
+.sc-minititle{font-size:10px;font-weight:600;line-height:1.25;color:var(--dsw-alias-label-primary);overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-word}
+.sc-minikind{font-size:8.5px;line-height:1.2;color:var(--dsw-alias-label-secondary);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+/* 缩略图里的独立对象：方框照它的颜色、文本框只留一圈虚线，都不写字、也不吃点击 */
+.sc-miniobj{position:absolute;box-sizing:border-box;border-radius:4px;pointer-events:none}
+.sc-miniobj.rect{background:color-mix(in srgb,var(--sc-accent,#7A8BA6) 55%,transparent);border:1px solid rgba(255,255,255,.10)}
+.sc-miniobj.text{border:1px dashed rgba(255,255,255,.22)}
+/* 缩略图里的空提示（画布上什么都没有时） */
+.sc-minihint{position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);text-align:center;font-size:12px;color:var(--dsw-alias-label-secondary);line-height:1.9}
 .sc-dots{position:absolute;left:-4000px;top:-4000px;width:8000px;height:8000px;pointer-events:none;background-image:radial-gradient(var(--dsw-alias-border-l1) 1px,transparent 1px);background-size:22px 22px;opacity:.7}
 .sc-edges{position:absolute;left:-4000px;top:-4000px;overflow:visible;pointer-events:none}
 /* 连线。颜色绝对不能用 --dsw-alias-border-l2：那是「描边级」的颜色，深色主题下算出来
